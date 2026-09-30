@@ -48,6 +48,8 @@ def usage():
         -m		MUSCLE executable PATH [/usr/local/bin/muscle]
         -b		basename for output files
         -s		file with most reliable haplogroup prediction
+        -d		folder with phylotree_r17.pickle and mhcs.tab
+        -n		sample name reported in the best results file
         """)
 
 
@@ -211,22 +213,23 @@ def load_sequences(fname):
 # TODO: seq_diff, seq_diff_mhcs, seq_diff_rcrs are not used anywhere
 def write_output(class_obj, seq_diff, seq_diff_mhcs, seq_diff_rcrs, merged_tables, outfile):
     print("Writing results for sequence {}".format(outfile))
-    class_obj.pprint(open(outfile + '.csv', 'w'))
-    class_obj.pprint_sorted(open(outfile + '.sorted.csv', 'w'))
-    merged_tables_file = open(outfile + '_merged_diff.csv', 'w')
-    for row in merged_tables:
-        merged_tables_file.write(','.join(row)+'\n')
+    with open(outfile + '.csv', 'w') as fh:
+        class_obj.pprint(fh)
+    with open(outfile + '.sorted.csv', 'w') as fh:
+        class_obj.pprint_sorted(fh)
+    with open(outfile + '_merged_diff.csv', 'w') as fh:
+        for row in merged_tables:
+            fh.write(','.join(row)+'\n')
 
 
 def main_mt_hpred(contig_file='mtDNAassembly-contigs.fasta',
                   muscle_exe="/usr/bin/muscle",
                   basename="mtDNAassembly-contigs",
                   best_results_file='mt_classification_best_results.csv',
-                  data_file=None):
+                  data_file=None, sample_name=None):
     print("Your best results file is {}".format(best_results_file))
-    # sample name
-    f = os.path.abspath(contig_file)
-    sample_name = contig_file.split('-')[0]
+    if sample_name is None:
+        sample_name = contig_file.split('-')[0]
     # haplogroup tree parsing
     htrees = [
         (tree.HaplogroupTree(
@@ -241,6 +244,8 @@ def main_mt_hpred(contig_file='mtDNAassembly-contigs.fasta',
     
     print("\nLoading contig sequences from file {}".format(contig_file))
     contig_array = SeqIO.index(contig_file, 'fasta')
+    if len(contig_array) == 0:
+        raise ValueError("No contig sequences found in {}".format(contig_file))
 
     print("\nAligning Contigs to mtDNA reference genome...\n")
     
@@ -273,30 +278,35 @@ def main_mt_hpred(contig_file='mtDNAassembly-contigs.fasta',
     seq_classify.sample_name = sample_name
     
     print("Contig alignment to MHCS and rCRS")
-    m = list(seq_classify.mhcss)[0]
-    print("Aligning contigs to MHCS SeqDiff object")
-    its_mhcs = SeqRecord(Seq(mhcs_dict[m]), id = m, name = m)
-    for x, contig in enumerate(contig_array):
-        if x == 0:
-            contig_mhcs_seq_diff = align_sequence(muscle_exe,
-                                                  obj=contig_array[contig],
-                                                  rif=its_mhcs)
-            contig_mhcs_seq_diff.find_segment()
-            contig_mhcs_seq_diff.regions.append([contig_seq_diff.start,
-                                                 contig_seq_diff.end])
-        else:
-            incoming_mhcs_seqdiff = align_sequence(muscle_exe,
-                                                   obj=contig_array[contig],
-                                                   rif=its_mhcs)
-            incoming_mhcs_seqdiff.find_segment()
-            contig_mhcs_seq_diff.diff_list.extend(incoming_mhcs_seqdiff.diff_list)
-            contig_mhcs_seq_diff.regions.append([incoming_mhcs_seqdiff.start,
-                                                 incoming_mhcs_seqdiff.end])
+    mhcss = list(seq_classify.mhcss)
+    if not mhcss:
+        # e.g. a sequence identical to RSRS, the root of the tree
+        print("No haplogroup assigned: skipping the alignment to MHCS")
+        contig_mhcs_seq_diff = NGclassify.SequenceDiff()
+        contig_mhcs_seq_diff.diff_list = []
+    else:
+        m = mhcss[0]
+        print("Aligning contigs to MHCS SeqDiff object")
+        its_mhcs = SeqRecord(Seq(mhcs_dict[m]), id = m, name = m)
+        for x, contig in enumerate(contig_array):
+            if x == 0:
+                contig_mhcs_seq_diff = align_sequence(muscle_exe,
+                                                      obj=contig_array[contig],
+                                                      rif=its_mhcs)
+                contig_mhcs_seq_diff.find_segment()
+                contig_mhcs_seq_diff.regions.append([contig_seq_diff.start,
+                                                     contig_seq_diff.end])
+            else:
+                incoming_mhcs_seqdiff = align_sequence(muscle_exe,
+                                                       obj=contig_array[contig],
+                                                       rif=its_mhcs)
+                incoming_mhcs_seqdiff.find_segment()
+                contig_mhcs_seq_diff.diff_list.extend(incoming_mhcs_seqdiff.diff_list)
+                contig_mhcs_seq_diff.regions.append([incoming_mhcs_seqdiff.start,
+                                                     incoming_mhcs_seqdiff.end])
     
     print("rCRS SeqDiff object")
-    # TODO: rcrs here is useless
-    rcrs = datatypes.Sequence('rCRS', consts.rcrs)
-    rcrs = SeqRecord(Seq(consts.rcrs), id=m, name=m)
+    rcrs = SeqRecord(Seq(consts.rcrs), id='rCRS', name='rCRS')
     for x, contig in enumerate(contig_array):
         if x == 0:
             contig_rcrs_seq_diff = align_sequence(muscle_exe,
@@ -321,7 +331,7 @@ def main_mt_hpred(contig_file='mtDNAassembly-contigs.fasta',
                                 contig_rcrs_seq_diff.diff_list)
     # OUTPUTS
     open(best_results_file, 'a').write(','.join(
-        [basename, ';'.join([i[0] for i in seq_classify.haplo_best.items()])]
+        [sample_name, ';'.join(seq_classify.haplo_best.keys())]
     ) + '\n')
     return (seq_classify, contig_seq_diff, contig_mhcs_seq_diff,
             contig_rcrs_seq_diff, mergedtables)
@@ -329,12 +339,14 @@ def main_mt_hpred(contig_file='mtDNAassembly-contigs.fasta',
 
 if __name__ == "__main__":
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hi:m:b:s:d:")
+        opts, args = getopt.getopt(sys.argv[1:], "hi:m:b:s:d:n:")
     except getopt.GetoptError as err:
         print(str(err))
         usage()
         sys.exit()
     contig_file = 'mtDNAassembly-contigs.fasta'
+    data_file = None
+    sample_name = None
     muscle_exe = shutil.which('muscle')
     basename = 'mtDNAassembly-contigs'
     best_results_file = 'mt_classification_best_results.csv'
@@ -352,23 +364,24 @@ if __name__ == "__main__":
             basename = a
         elif o == "-s":
             best_results_file = a
+        elif o == "-n":
+            sample_name = a
         else:
             assert False, "Unhandled option."
 
-    # TODO: what is data_file?
     if data_file is None:
         sys.exit(("You must specify the folder where data for mt_classifier "
-                  "execution are located. Abort."))
-    else:
-        # TODO: asserting like this is not good
-        assert os.path.exists(os.path.join(data_file, "phylotree_r17.pickle"))
+                  "execution are located (-d). Abort."))
+    for required in ("phylotree_r17.pickle", "mhcs.tab"):
+        if not os.path.exists(os.path.join(data_file, required)):
+            sys.exit("{} not found in {}. Abort.".format(required, data_file))
     (sc, contig_seq_diff, contig_mhcs_seq_diff,
      contig_rcrs_seq_diff, mergedtables) = main_mt_hpred(contig_file=contig_file,
                                                          muscle_exe=muscle_exe,
                                                          basename=basename,
                                                          best_results_file=best_results_file,
-                                                         data_file=data_file)
-    # TODO: what is seq_classify? guess it may be "sc" defined above..?
-    write_output(seq_classify, contig_seq_diff.diff_list,
+                                                         data_file=data_file,
+                                                         sample_name=sample_name)
+    write_output(sc, contig_seq_diff.diff_list,
                  contig_mhcs_seq_diff.diff_list, contig_rcrs_seq_diff.diff_list,
                  mergedtables, basename)

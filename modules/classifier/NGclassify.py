@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 from collections import OrderedDict
+import os
+import re
 import subprocess
 import sys
+import tempfile
 
 from Bio import SeqIO
 from Bio.Seq import Seq
@@ -50,9 +53,11 @@ def get_snps(rif, inc, start_pos=0, gap='-'):
     pos_a = n_gaps = start_pos
     alg_len = len(rif)
     mutations = []
+    # index plain strings: converting Seq objects at every position is quadratic
+    rif, inc = str(rif), str(inc)
     while pos_a < (alg_len + start_pos):
-        x = rif.tostring()[pos_a]
-        y = inc.tostring()[pos_a]
+        x = rif[pos_a]
+        y = inc[pos_a]
         if x != y:
             if x != gap and y != gap:
                 # SNP
@@ -104,19 +109,19 @@ def get_snps(rif, inc, start_pos=0, gap='-'):
                 pos_a += 1
                 n_gaps += 1
                 try:
-                    x = rif.tostring()[pos_a]
-                    y = inc.tostring()[pos_a]
+                    x = rif[pos_a]
+                    y = inc[pos_a]
                 except IndexError:
                     # caso limite: l'inserzione e' di lunghezza 1 alla fine dell'allineamento
-                    x = rif.tostring()[pos_a-1]
-                    y = inc.tostring()[pos_a-1]
+                    x = rif[pos_a-1]
+                    y = inc[pos_a-1]
                 while pos_a < alg_len-1 and ((x == gap and y != gap) or (x == y == gap)):
                     if y != gap:
                         ins_seq.append(y)
                     pos_a += 1
                     n_gaps += 1
-                    x = rif.tostring()[pos_a]
-                    y = inc.tostring()[pos_a]
+                    x = rif[pos_a]
+                    y = inc[pos_a]
                 if pos_a == alg_len - 1: pos_a += 1
                 mut = datatypes.Insertion("%d.%s" % (pos_i, ''.join(ins_seq)))
                 mutations.append(mut)
@@ -125,14 +130,14 @@ def get_snps(rif, inc, start_pos=0, gap='-'):
                 pos_d = pos_a-n_gaps+1
                 pos_a += 1
                 if pos_a < alg_len:
-                    x = rif.tostring()[pos_a]
-                    y = inc.tostring()[pos_a]
+                    x = rif[pos_a]
+                    y = inc[pos_a]
                     while pos_a < alg_len-1 and ((y == gap and x != gap) or (x == y == gap)):
                         pos_a += 1
                         if x == y == gap:
                             n_gaps += 1
-                        x = rif.tostring()[pos_a]
-                        y = inc.tostring()[pos_a]
+                        x = rif[pos_a]
+                        y = inc[pos_a]
                     if pos_a == alg_len - 1: pos_a += 1
                 mut = datatypes.Deletion("%d-%dd" % (pos_d, pos_a-n_gaps))
                 mutations.append(mut)
@@ -198,15 +203,37 @@ def compare_mutations_regions(h_pos_list, s_pos_list, regions=None):
             h_pos_list_checked, s_pos_list)
 
 
+def muscle_major_version(muscle_exe):
+    """Return the major version of the MUSCLE executable (e.g. 3 or 5)."""
+    out = subprocess.run([muscle_exe, '-version'], stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT,
+                         universal_newlines=True).stdout
+    match = re.search(r'(?i)muscle\s+v?(\d+)', out)
+    return int(match.group(1)) if match else 3
+
+
 def align_sequences(muscle_exe, rif, inc):  # muscle
-    muscle = subprocess.Popen([muscle_exe+' -quiet'], shell=True,
-                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                              universal_newlines=True)
-    alg = muscle.communicate(">%s\n%s\n>%s\n%s\n" % (rif.id, rif.seq.tostring(),
-                                                     inc.id, inc.seq.tostring()))[0]
-    alg_split = alg.split('>')[1:]
-    rif_alg = ''.join(alg_split[0].split()[1:]).upper()
-    inc_alg = ''.join(alg_split[1].split()[1:]).upper()
+    """Align inc against rif with MUSCLE 3.8.
+
+    Inputs are written under fixed ids and matched back by id, since
+    MUSCLE may reorder its output.
+    """
+    if muscle_major_version(muscle_exe) >= 5:
+        # MUSCLE 5 aborts on whole mitogenomes ("Memory object >4Gb")
+        raise RuntimeError("{} is MUSCLE 5 or later, which cannot align whole "
+                           "mitochondrial genomes: please use MUSCLE 3.8 "
+                           "(conda install muscle=3.8.1551)".format(muscle_exe))
+    with tempfile.TemporaryDirectory() as tmp:
+        in_fasta = os.path.join(tmp, 'in.fasta')
+        out_fasta = os.path.join(tmp, 'out.fasta')
+        with open(in_fasta, 'w') as fh:
+            fh.write(">rif\n%s\n>inc\n%s\n" % (str(rif.seq), str(inc.seq)))
+        subprocess.run([muscle_exe, '-quiet', '-in', in_fasta, '-out', out_fasta],
+                       check=True)
+        aligned = {r.id: str(r.seq).upper()
+                   for r in SeqIO.parse(out_fasta, 'fasta')}
+    rif_alg, inc_alg = aligned['rif'], aligned['inc']
+    alg = ">%s\n%s\n>%s\n%s\n" % (rif.id, rif_alg, inc.id, inc_alg)
     return (alg, SeqRecord(Seq(rif_alg), id='RSRS', name='RSRS'),
             SeqRecord(Seq(inc_alg), id=inc.id, name=inc.name))
 
@@ -238,6 +265,10 @@ class SequenceDiff(object):
     ignore_position = []
 
     def __init__(self, mit=True):
+        # per-instance lists: class-level ones would be shared (and keep
+        # growing) across every sequence classified in the same process
+        self.regions = []
+        self.ignore_position = []
         if mit:
             self.ignore_position.extend([datatypes.Deletion("3107d"),
                                          datatypes.Deletion("523-524d")])
@@ -263,8 +294,8 @@ class SequenceDiff(object):
             # e_idx = self.obj.seq.find('-', b_idx)
             tmp = ''.join(reversed(self.obj.seq))
             e_idx = len(self.obj.seq) - min(tmp.find(x) for x in consts.DNA)
-            b_idx = len(self.rif.seq[:b_idx].tostring().replace('-', ''))
-            e_idx = len(self.rif.seq[:e_idx].tostring().replace('-', ''))
+            b_idx = len(str(self.rif.seq[:b_idx]).replace('-', ''))
+            e_idx = len(str(self.rif.seq[:e_idx]).replace('-', ''))
             self.start = b_idx
             self.end = e_idx
             self.diff_list_raw = self.diff_list
