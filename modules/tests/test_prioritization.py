@@ -1,6 +1,11 @@
+import shutil
+
+import pytest
+
 from modules.prioritization import (
-    count_variants, prioritize_variants, private_variants, read_coverage,
-    read_merged_diff, summarize_samples, variant_key, vcf_allele_key
+    count_primary_reads, count_variants, prioritize_variants, private_variants,
+    read_coverage, read_merged_diff, summarize_samples, trimmomatic_surviving_reads,
+    variant_key, vcf_allele_key, write_mt_read_fraction
 )
 
 VCF_HEADER = (
@@ -76,9 +81,42 @@ def test_count_variants_and_summary(tmp_path):
     assert read_coverage(cov, min_depth=5) == (50.0, 8.0)
 
     best = write(tmp_path / "s1_best.csv", "s1,H1;H1a\n")
+    mt_reads = write(tmp_path / "s1_mt.tsv", "sample\treads_after_trimming\tmtDNA_reads\tmtDNA_reads_pct\n"
+                     "s1\t2000\t50\t2.5\n")
     out = tmp_path / "summary.txt"
-    summarize_samples([{"sample": "s1", "best_results": best, "vcf": vcf, "coverage": cov}],
+    summarize_samples([{"sample": "s1", "best_results": best, "vcf": vcf, "coverage": cov,
+                        "mt_reads": mt_reads}],
                       {"s1": 3}, str(out), homoplasmy_threshold=0.97,
                       heteroplasmy_min=0.03, min_depth=5)
     row = out.read_text().splitlines()[-1].split("\t")
-    assert row == ["s1", "50.0", "8.0", "H1;H1a", "6", "2", "3", "1", "3"]
+    assert row == ["s1", "2000", "50", "2.5", "50.0", "8.0", "H1;H1a", "6", "2", "3", "1", "3"]
+
+
+TRIMMOMATIC_LOG = ("TrimmomaticPE: Started with arguments:\n ...\n"
+                   "Input Read Pairs: 1000 Both Surviving: 900 (90.00%) Forward Only Surviving: 40 (4.00%) "
+                   "Reverse Only Surviving: 10 (1.00%) Dropped: 50 (5.00%)\n"
+                   "TrimmomaticPE: Completed successfully\n")
+
+SAM = ("@SQ\tSN:chrM\tLN:16569\n"
+       "r1\t99\tchrM\t100\t60\t10M\t=\t150\t60\tACGTACGTAC\tIIIIIIIIII\n"
+       "r1\t147\tchrM\t150\t60\t10M\t=\t100\t-60\tACGTACGTAC\tIIIIIIIIII\n"
+       "r2\t0\tchrM\t200\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\n"
+       "r2\t2048\tchrM\t1\t60\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\n"
+       "r3\t256\tchrM\t300\t0\t10M\t*\t0\t0\tACGTACGTAC\tIIIIIIIIII\n")
+
+
+def test_trimmomatic_surviving_reads(tmp_path):
+    log = write(tmp_path / "trim.log", TRIMMOMATIC_LOG)
+    # both mates of 900 pairs, plus 40 + 10 unpaired reads
+    assert trimmomatic_surviving_reads(log) == 1850
+
+
+@pytest.mark.skipif(shutil.which("samtools") is None, reason="needs samtools")
+def test_mt_read_fraction(tmp_path):
+    sam = write(tmp_path / "mt.sam", SAM)
+    # primary reads only: not the supplementary (2048) and secondary (256) ones
+    assert count_primary_reads(sam) == 3
+    log = write(tmp_path / "trim.log", TRIMMOMATIC_LOG)
+    out = tmp_path / "mt.tsv"
+    write_mt_read_fraction("s1", [log, log], [sam, sam], str(out))
+    assert out.read_text().splitlines()[1].split("\t") == ["s1", "3700", "6", "0.1622"]

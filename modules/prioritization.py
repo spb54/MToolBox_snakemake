@@ -12,6 +12,7 @@ import csv
 import gzip
 import math
 import re
+import subprocess
 from collections import OrderedDict
 
 SNP_RE = re.compile(r"^(\d+)([A-Z])(?:\(([A-Z])\))?$")
@@ -159,6 +160,53 @@ def read_coverage(path, min_depth=5):
     return round(100.0 * covered / n, 2), round(float(total) / n, 2)
 
 
+def trimmomatic_surviving_reads(log_file):
+    """ Number of reads left after trimming, from a Trimmomatic PE log:
+    both mates of surviving pairs plus surviving unpaired reads. """
+    with open(log_file) as fh:
+        text = fh.read()
+    m = re.search(r"Input Read Pairs: \d+ Both Surviving: (\d+) .*?"
+                  r"Forward Only Surviving: (\d+) .*?Reverse Only Surviving: (\d+)", text)
+    if m is None:
+        raise ValueError("No Trimmomatic PE summary found in {}".format(log_file))
+    both, forward, reverse = (int(x) for x in m.groups())
+    return 2 * both + forward + reverse
+
+
+def count_primary_reads(bam_file, samtools="samtools"):
+    """ Number of primary mapped reads in a BAM (no secondary or
+    supplementary alignments, e.g. of reads crossing the mtDNA origin). """
+    out = subprocess.run([samtools, "view", "-c", "-F", "0x904", bam_file],
+                         check=True, stdout=subprocess.PIPE,
+                         universal_newlines=True).stdout
+    return int(out.strip())
+
+
+def write_mt_read_fraction(sample, trimmomatic_logs, mt_bams, out_file):
+    """ Write the number and percentage of reads mapped to the mtDNA.
+
+    Args:
+        sample: sample name
+        trimmomatic_logs: Trimmomatic logs of the sample's libraries
+        mt_bams: mtDNA alignments of the sample's libraries, before
+            duplicate removal (the total also includes duplicates)
+        out_file: output tsv path
+    """
+    total = sum(trimmomatic_surviving_reads(f) for f in trimmomatic_logs)
+    mt_reads = sum(count_primary_reads(f) for f in mt_bams)
+    pct = round(100.0 * mt_reads / total, 4) if total else 0.0
+    with open(out_file, "w") as out:
+        out.write("sample\treads_after_trimming\tmtDNA_reads\tmtDNA_reads_pct\n")
+        out.write("{}\t{}\t{}\t{}\n".format(sample, total, mt_reads, pct))
+
+
+def read_mt_read_fraction(path):
+    """ Return (reads_after_trimming, mtDNA_reads, mtDNA_reads_pct) as strings. """
+    with open(path) as fh:
+        rows = [r for r in csv.reader(fh, delimiter="\t") if r]
+    return tuple(rows[-1][1:4])
+
+
 def _to_float(value):
     try:
         return float(value)
@@ -239,7 +287,8 @@ def count_variants(sample_vcf, homoplasmy_threshold=0.97, heteroplasmy_min=0.03)
     return n, homo, het, low
 
 
-SUMMARY_HEADER = ["Sample", "mtDNA coverage (%)", "Mean depth",
+SUMMARY_HEADER = ["Sample", "Reads after trimming", "mtDNA reads", "mtDNA reads (%)",
+                  "mtDNA coverage (%)", "Mean depth",
                   "Best predicted haplogroup(s)", "N. of variants",
                   "N. of homoplasmic variants",
                   "N. of heteroplasmic variants",
@@ -254,7 +303,8 @@ def summarize_samples(sample_inputs, prioritized_counts, out_file,
 
     Args:
         sample_inputs: list of dicts with keys sample, best_results,
-            vcf (single-sample VCF) and coverage (samtools depth -a)
+            vcf (single-sample VCF), coverage (samtools depth -a) and
+            mt_reads (written by write_mt_read_fraction)
         prioritized_counts: dict sample -> n. of prioritized variants
         out_file: output tsv path
         homoplasmy_threshold: min HF of homoplasmic variants
@@ -271,7 +321,7 @@ def summarize_samples(sample_inputs, prioritized_counts, out_file,
             breadth, mean_depth = read_coverage(s["coverage"], min_depth)
             n, homo, het, low = count_variants(s["vcf"], homoplasmy_threshold,
                                                heteroplasmy_min)
-            row = [s["sample"], breadth, mean_depth,
+            row = [s["sample"], *read_mt_read_fraction(s["mt_reads"]), breadth, mean_depth,
                    read_best_haplogroups(s["best_results"]),
                    n, homo, het, low,
                    prioritized_counts.get(s["sample"], 0)]
