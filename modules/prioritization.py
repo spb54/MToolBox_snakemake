@@ -211,15 +211,17 @@ def prioritize_variants(sample_merged_diffs, annotated_vcf, out_file):
     return counts
 
 
-def count_variants(sample_vcf, hf_threshold=0.8):
+def count_variants(sample_vcf, homoplasmy_threshold=0.97, heteroplasmy_min=0.03):
     """ Count the ALT alleles called in a single-sample VCF.
 
     Returns:
-        (n_variants, n_homoplasmic, n_hetero_above, n_hetero_below):
-        homoplasmic means HF == 1, the other two are split at hf_threshold
+        (n_variants, n_homoplasmic, n_heteroplasmic, n_low_level):
+        homoplasmic means HF >= homoplasmy_threshold, heteroplasmic
+        heteroplasmy_min <= HF < homoplasmy_threshold and low-level
+        HF < heteroplasmy_min
     """
     _, samples, records = read_vcf(sample_vcf)
-    n = homo = above = below = 0
+    n = homo = het = low = 0
     for rec in records:
         call = rec["calls"].get(samples[0], {}) if samples else {}
         if call.get("GT", "1") in ("0", "."):
@@ -228,25 +230,26 @@ def count_variants(sample_vcf, hf_threshold=0.8):
         hf = _to_float(call.get("HF"))
         if hf is None:
             continue
-        if hf >= 1.0:
+        if hf >= homoplasmy_threshold:
             homo += 1
-        elif hf >= hf_threshold:
-            above += 1
+        elif hf >= heteroplasmy_min:
+            het += 1
         elif hf > 0:
-            below += 1
-    return n, homo, above, below
+            low += 1
+    return n, homo, het, low
 
 
 SUMMARY_HEADER = ["Sample", "mtDNA coverage (%)", "Mean depth",
                   "Best predicted haplogroup(s)", "N. of variants",
                   "N. of homoplasmic variants",
-                  "N. of heteroplasmic variants HF>=threshold",
-                  "N. of heteroplasmic variants HF<threshold",
+                  "N. of heteroplasmic variants",
+                  "N. of low-level variants",
                   "N. of prioritized variants"]
 
 
 def summarize_samples(sample_inputs, prioritized_counts, out_file,
-                      hf_threshold=0.8, min_depth=5):
+                      homoplasmy_threshold=0.97, heteroplasmy_min=0.03,
+                      min_depth=5):
     """ Write one summary row per sample.
 
     Args:
@@ -254,17 +257,22 @@ def summarize_samples(sample_inputs, prioritized_counts, out_file,
             vcf (single-sample VCF) and coverage (samtools depth -a)
         prioritized_counts: dict sample -> n. of prioritized variants
         out_file: output tsv path
-        hf_threshold: heteroplasmy threshold for the HF columns
+        homoplasmy_threshold: min HF of homoplasmic variants
+        heteroplasmy_min: min HF of heteroplasmic variants (below:
+            low-level variants)
         min_depth: min depth for a position to count as covered
     """
     with open(out_file, "w") as out:
-        out.write("# heteroplasmy threshold: {}\n".format(hf_threshold))
+        out.write("# homoplasmic: HF >= {0}; heteroplasmic: {1} <= HF < {0}; "
+                  "low-level: HF < {1}\n".format(homoplasmy_threshold,
+                                                 heteroplasmy_min))
         out.write("\t".join(SUMMARY_HEADER) + "\n")
         for s in sample_inputs:
             breadth, mean_depth = read_coverage(s["coverage"], min_depth)
-            n, homo, above, below = count_variants(s["vcf"], hf_threshold)
+            n, homo, het, low = count_variants(s["vcf"], homoplasmy_threshold,
+                                               heteroplasmy_min)
             row = [s["sample"], breadth, mean_depth,
                    read_best_haplogroups(s["best_results"]),
-                   n, homo, above, below,
+                   n, homo, het, low,
                    prioritized_counts.get(s["sample"], 0)]
             out.write("\t".join(str(x) for x in row) + "\n")

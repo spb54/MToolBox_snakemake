@@ -34,5 +34,8 @@ mtvcf_main_analysis:
     tail_mismatch: 5
 
 prioritization:
-    # heteroplasmy threshold used to split heteroplasmic variants in the summary
-    hf_threshold: 0.8
+    # heteroplasmy fraction (HF) cut-offs used to count variants in the summary:
+    # homoplasmic if HF >= homoplasmy_threshold, heteroplasmic if
+    # heteroplasmy_min <= HF < homoplasmy_threshold, low-level below
+    homoplasmy_threshold: 0.97
+    heteroplasmy_min: 0.03

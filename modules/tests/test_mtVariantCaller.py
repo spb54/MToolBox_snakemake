@@ -10,7 +10,6 @@ from ..mtVariantCaller import (
     allele_strand_counter,
     allele_strand_updater,
     mismatch_detection,
-    parse_coverage_data_file
 )
 
 r = "A00181:108:HLFMYDSXX:2:2205:3495:11303\t161\tk127_149\t569\t40\t146M1D5M\t=\t564\t-157\tCGTAACGGTTTGCTCCGTCTGACACGGCGGTTCCTTATCGAGTTGGTGTTCCCGGGCATCGTGGGCGCCGGGGGAGTTGTGAATGGCGGTACAATACCCGACGAGGAAAAATACCATGATGTTTACGCGCCATTTCATGTTGATGAGATCG\tFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:F,FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,FFFFFFFFFFFFFF\tAS:i:-23\tXN:i:0\tXM:i:3\tXO:i:1\tXG:i:1\tNM:i:4\tMD:Z:32T113^C1G2T0\tYS:i:-28\tYT:Z:DP"
@@ -21,11 +20,6 @@ test_sam = os.path.join(
     "data",
     "test.sam"
 )
-test_bam_cov = os.path.join(
-    os.path.dirname(os.path.realpath(__file__)),
-    "data",
-    "test.bam.cov"
-) 
 
 class TestSNPcalling(unittest.TestCase):
 
@@ -53,6 +47,17 @@ class TestSNPcalling(unittest.TestCase):
         # Then
         self.assertEqual(expected, result)
     
+    def test_parse_mismatches_from_cigar_md_depth_positions(self):
+        # the read counts towards the depth where a mismatch would be counted:
+        # 146M1D5M at 569, so read offsets 5-145 (the first/last 5 bases and
+        # the deletion at 715 excluded), minus the two Q11 bases (',')
+        result = parse_mismatches_from_cigar_md(self.r, return_depth_positions=True)
+        depth_positions = list(result[-1])
+        expected = [p for p in range(574, 715) if p not in (605, 705)]
+        self.assertEqual(expected, depth_positions)
+        # every counted mismatch lies on a position counted in the depth
+        self.assertTrue(set(result[0]) <= set(depth_positions))
+
     def test_allele_strand_counter(self):
         # Given
         expected = [[1, 0], [0, 1]]
@@ -75,7 +80,7 @@ class TestSNPcalling(unittest.TestCase):
         # Given
         expected = self.mismatch_dict
         # When
-        result = mismatch_detection(sam=test_sam, coverage_data=parse_coverage_data_file(test_bam_cov))
+        result = mismatch_detection(sam=test_sam)
         # Then
         self.assertEqual(expected, result)
         
@@ -176,3 +181,23 @@ def test_get_consensus_single_no_variants():
     # a sample identical to the reference has no variants
     from modules.mtVariantCaller import get_consensus_single
     assert get_consensus_single([]) == []
+
+
+def test_indel_region_end():
+    from modules.mtVariantCaller import indel_region_end
+    # CA deleted after the T at 4, in the CACACA repeat at 5-10: reads must
+    # reach position 11 (G) to show whether the deletion is present
+    seq = "GGGTCACACAGTTT"
+    assert indel_region_end(seq, 4, "CA", "del") == 11
+    # C inserted after the T at 3, in the poly-C at 4-7: first base after is 8
+    assert indel_region_end("AATCCCCGT", 3, "C", "ins") == 8
+    # no repeat: the base right after the indel
+    assert indel_region_end("AATGCAT", 3, "C", "ins") == 4
+
+
+def test_read_indels():
+    from modules.mtVariantCaller import read_indels
+    seq = "NNNNN" + "A" * 10 + "C" * 5 + "G" + "T" * 4
+    fields = ["r1", "0", "chrM", "100", "60", "5S10M2D5M1I4M", "*", "0", "0", seq, "I" * len(seq)]
+    # deletion after 109 (100-109 aligned), insertion of G after 116
+    assert read_indels(fields) == [("del", 109, 2), ("ins", 116, "G")]

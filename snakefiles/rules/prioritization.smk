@@ -30,7 +30,8 @@ rule prioritize:
         summary = "results/prioritization/{ref_genome_mt}_{ref_genome_n}_summary.txt"
     params:
         samples = lambda wildcards: human_samples(wildcards.ref_genome_mt, wildcards.ref_genome_n),
-        hf_threshold = config.get("prioritization", {}).get("hf_threshold", 0.8),
+        homoplasmy_threshold = config.get("prioritization", {}).get("homoplasmy_threshold", 0.97),
+        heteroplasmy_min = config.get("prioritization", {}).get("heteroplasmy_min", 0.03),
         min_depth = config["mtvcf_main_analysis"]["minrd"]
     message: "Prioritizing variants for {wildcards.ref_genome_mt}_{wildcards.ref_genome_n}"
     run:
@@ -40,5 +41,6 @@ rule prioritize:
                          for s, b, v, c in zip(params.samples, input.best_results,
                                                input.vcfs, input.coverage)]
         summarize_samples(sample_inputs, counts, output.summary,
-                          hf_threshold=params.hf_threshold,
+                          homoplasmy_threshold=params.homoplasmy_threshold,
+                          heteroplasmy_min=params.heteroplasmy_min,
                           min_depth=params.min_depth)

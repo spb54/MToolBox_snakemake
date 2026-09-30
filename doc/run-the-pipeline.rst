@@ -78,6 +78,8 @@ MToolBox-variant-calling
 
 Performs QC, quality trimming of raw reads, read alignment, alignment filtering, variant calling. The final output is a VCF file.
 
+In the VCF, :code:`HF` is the heteroplasmy fraction of each alternative allele, i.e. its read count divided by :code:`DP`. Alternative alleles are only counted from bases with quality >= :code:`mtvcf_main_analysis: Q` and at least :code:`tail_mismatch` bases from the read ends (to avoid end-of-read artefacts), and :code:`DP` counts the reads passing the same filters at that position, so that :code:`HF` is not biased by the read-end filter. For indels, only informative reads are counted in both :code:`DP` and the allele count: reads covering the base preceding the indel and the first base after the repeat or homopolymer containing it (e.g. the poly-C tract at 303-315 or the CA repeat at 514-523), since reads ending inside the repeat cannot show whether the indel is present. Indel alleles that no informative read supports are dropped.
+
 MToolBox-variant-annotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -101,4 +103,4 @@ MToolBox-human-prioritization
 Human only. Runs the complete analysis: variant calling, haplogroup prediction, annotation, then
 
 - :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_prioritized_variants.txt`: variants private to a sample, i.e. differing from RSRS, from the MHCS of its haplogroup and from rCRS, with their mtoolnote annotations, sorted by ascending nucleotide variability (:code:`NtVarH`)
-- :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_summary.txt`: per sample coverage, mean depth, best haplogroup(s), number of variants (homoplasmic, heteroplasmic above/below :code:`prioritization: hf_threshold` in :code:`config.yaml`, default 0.8) and of prioritized variants
+- :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_summary.txt`: per sample coverage, mean depth, best haplogroup(s), number of variants, split by heteroplasmy fraction (HF) into homoplasmic (HF >= :code:`prioritization: homoplasmy_threshold` in :code:`config.yaml`, default 0.97), heteroplasmic (HF >= :code:`heteroplasmy_min`, default 0.03) and low-level, and number of prioritized variants

@@ -14,7 +14,6 @@ import os
 import re
 from types import SimpleNamespace
 import vcf
-from modules.general import parse_coverage_data_file
 
 from Bio.bgzf import BgzfWriter
 from Bio import SeqIO
@@ -162,7 +161,7 @@ def read_length_from_cigar(cigar_bases, cigar_nt):
 
 
 def parse_mismatches_from_cigar_md(sam_record, minqs=25, tail=5,
-                                   tail_mismatch=5):
+                                   tail_mismatch=5, return_depth_positions=False):
     """Extracts mismatch substitutions using MD SAM flag
     
     - MD flag reflects the **mapped portion of the read**  - no soft clipping no
@@ -178,6 +177,11 @@ def parse_mismatches_from_cigar_md(sam_record, minqs=25, tail=5,
     minqs: int
     tail: int
     tail_mismatch: 5
+    return_depth_positions: bool
+        also return, as a numpy array, the reference positions where this
+        read passes the same filters as mismatches (base quality >= minqs,
+        at least tail_mismatch bases from the read ends): the read counts
+        towards the depth of these positions
 
     Returns
     -------
@@ -256,7 +260,38 @@ def parse_mismatches_from_cigar_md(sam_record, minqs=25, tail=5,
                     all_qs.append(ord(new_qs[t])-33)
         except IndexError: #TODO  - shouldn't we raise here a more human readable error?
             pass
+    if return_depth_positions:
+        depth_positions = eligible_depth_positions(new_seq, new_qs, leftmost,
+                                                   eff_read_length, minqs=minqs,
+                                                   tail_mismatch=tail_mismatch)
+        return (positions_ref_final, positions_read_final, all_ref, all_mism,
+                all_qs, strand, depth_positions)
     return positions_ref_final, positions_read_final, all_ref, all_mism, all_qs, strand
+
+
+def eligible_depth_positions(new_seq, new_qs, leftmost, eff_read_length,
+                             minqs=25, tail_mismatch=5):
+    """ Reference positions (1-based) where a read counts towards the depth.
+
+    new_seq/new_qs are the read bases and qualities as aligned to the
+    reference by parse_mismatches_from_cigar_md (soft clips and insertions
+    removed, deleted bases padded with "I"), so that read offset t maps to
+    reference position leftmost + 1 + t. A position counts if it is not a
+    deletion and passes the same filters applied to mismatches: this keeps
+    the depth consistent with the allele counts, so that heteroplasmy is not
+    underestimated by reads whose ends cover the position.
+
+    Returns
+    -------
+    numpy array of int
+    """
+    seq = np.frombuffer("".join(new_seq).encode(), dtype=np.uint8)
+    qs = np.frombuffer("".join(new_qs).encode(), dtype=np.uint8).astype(np.int16) - 33
+    n = min(len(seq), len(qs))
+    t = np.arange(n)
+    keep = ((seq[:n] != ord("I")) & (qs[:n] >= minqs) &
+            (t >= tail_mismatch) & (eff_read_length - t >= tail_mismatch))
+    return t[keep] + leftmost + 1
 
 def allele_strand_counter(strand):
     """ Initialize a strand counter instance for mismatch detection. 
@@ -724,7 +759,11 @@ def mtvcf_main_analysis(mtable_file=None, coverage_data_file=None, sam_file=None
                         name2=None, tail=5, Q=25, minrd=5, ref_mt=None,
                         tail_mismatch=5):
 
-    coverage_data = parse_coverage_data_file(coverage_data_file)
+    # depth per position counting only bases that pass the same filters as
+    # variant alleles (coverage_data_file, from samtools depth, is no longer
+    # used here: it also counts read ends, which biased heteroplasmy low)
+    mismatch_dict, depth = mismatch_detection(sam=sam_file, tail_mismatch=tail_mismatch,
+                                              minqs=Q, return_depth=True)
 
     if sam_file.endswith("gz"):
         sam = gzip.GzipFile(sam_file, mode = 'r')
@@ -739,13 +778,13 @@ def mtvcf_main_analysis(mtable_file=None, coverage_data_file=None, sam_file=None
     mate = ''
     # populate:
     # - mtDNA: a list of bases in the reference mt genome
-    # - coverage: a list of DP as calculated by samtools depth
+    # - coverage: a list of DP as calculated by mismatch_detection
     mtDNA = []
     Coverage = []
     ref = SeqIO.index(ref_mt, 'fasta')
     ref_seq = ref[list(ref.keys())[0]].seq
     for n in range(len(ref_seq)):
-        Coverage.append(coverage_data[n + 1])
+        Coverage.append(int(depth[n + 1]) if n + 1 < len(depth) else 0)
         mtDNA.append(ref_seq[n])
     mtDNAseq = "".join(mtDNA)
     ## apply functions to sam file and write outputs into a dictionary
@@ -822,9 +861,10 @@ def mtvcf_main_analysis(mtable_file=None, coverage_data_file=None, sam_file=None
                         dels = eval(x[1])
                         delflank = dels[0]-2
                         delfinal = dels[-1]
-                        covlist = Coverage[delflank:delfinal]
-                        convert = list(map(lambda x: int(x), covlist))
-                        totrd = round(np.median(convert),0) #median read depth of the region encompassing the del (samtools)
+                        # depth at the base preceding the deletion, which both
+                        # reference and deletion reads cover (the deleted bases
+                        # are not covered by deletion reads)
+                        totrd = int(Coverage[delflank])
                         if rd > totrd:
                             sys.stderr.write("deletion in pos {} with per base rd > total rd. Assuming total rd is equal to the bigger value\n".format(str(i)))
                         hetfreq = heteroplasmy(rd, totrd)
@@ -842,14 +882,14 @@ def mtvcf_main_analysis(mtable_file=None, coverage_data_file=None, sam_file=None
     # Mismatch detection
     print("\n\nsearching for mismatches in {0}.. please wait...\n\n".format(name2))
 
-    mismatch_dict = mismatch_detection(sam=sam_file, coverage_data=coverage_data,
-                                       tail_mismatch=tail_mismatch)
     x = 0  # alignment counter
     print("mismatch_dict length before filtering for allele_DP: {}".format(len(mismatch_dict)))
     print(mismatch_dict[j] for j in list(mismatch_dict.keys())[:5])
     for POS in mismatch_dict:
-        good_alleles_index = [mismatch_dict[POS].allele_DP.index(i)
-                              for i in mismatch_dict[POS].allele_DP if i > 5]
+        # enumerate: .index() would return the first allele with the same
+        # count, duplicating it and losing the other one
+        good_alleles_index = [j for j, i in enumerate(mismatch_dict[POS].allele_DP)
+                              if i > 5]
         mismatch_dict[POS].alleles = [mismatch_dict[POS].alleles[j]
                                       for j in good_alleles_index]
         # if this filters out all alleles, delete key from dict
@@ -889,8 +929,132 @@ def mtvcf_main_analysis(mtable_file=None, coverage_data_file=None, sam_file=None
              mismatch_dict[POS].het_ci_up, 'mism']
         Subst[name2].append(a)
 
+    rescore_indels(Indels[name2], sam_file, mtDNAseq, minqs=Q,
+                   tail_mismatch=tail_mismatch)
     Indels[name2].extend(Subst[name2])
     return Indels  # it's a dictionary
+
+
+def indel_region_end(mtDNAseq, anchor, indel_seq, kind):
+    """ First reference position (1-based) after the repeat containing an indel.
+
+    An indel inside a tandem repeat or homopolymer (e.g. a CA deleted from a
+    CA repeat, or a C inserted in a poly-C tract) can be placed anywhere in
+    the repeat: only reads extending past the repeat show whether it is
+    present. anchor is the base preceding the (left-aligned) indel.
+    """
+    k = len(indel_seq)
+    j = anchor + 1 if kind == 'ins' else anchor + k + 1
+    idx = 0
+    while j <= len(mtDNAseq):
+        expected = indel_seq[idx % k] if kind == 'ins' else mtDNAseq[j - 1 - k]
+        if mtDNAseq[j - 1] != expected:
+            break
+        j += 1
+        idx += 1
+    return j
+
+
+def read_indels(sam_fields):
+    """ Indels of a SAM record as (kind, anchor, sequence): the anchor is the
+    reference position (1-based) preceding the indel. """
+    cigar = re.findall(r'(\d+)([MIDNSHP=X])', sam_fields[5])
+    ref_pos = int(sam_fields[3]) - 1  # last reference position consumed
+    read_pos = 0
+    seq = sam_fields[9]
+    indels = []
+    for length, op in cigar:
+        length = int(length)
+        if op in 'M=X':
+            ref_pos += length
+            read_pos += length
+        elif op == 'I':
+            indels.append(('ins', ref_pos, seq[read_pos:read_pos + length]))
+            read_pos += length
+        elif op in 'DN':
+            indels.append(('del', ref_pos, length))
+            ref_pos += length
+        elif op == 'S':
+            read_pos += length
+    return indels
+
+
+def rescore_indels(indel_calls, sam_file, mtDNAseq, minqs=25, tail_mismatch=5):
+    """ Recompute depth and heteroplasmy of indel calls from informative reads.
+
+    A read is informative for an indel if it covers both the base preceding
+    the indel and the first base after the repeat containing it, with bases
+    passing the same filters used for the depth of mismatches (quality
+    >= minqs, at least tail_mismatch bases from the read ends). Reads ending
+    inside the repeat cannot show the indel and would otherwise count as
+    reference, underestimating heteroplasmy. indel_calls (the 'ins'/'del'
+    entries built by mtvcf_main_analysis) are updated in place, and calls
+    that no informative read supports are removed.
+    """
+    sites = []
+    for call in indel_calls:
+        if call[-1] == 'ins':
+            anchor = int(call[0])
+            indel = ('ins', anchor, call[3][0][1:])
+            region_end = indel_region_end(mtDNAseq, anchor, indel[2], 'ins')
+        elif call[-1] == 'del':
+            anchor = int(call[0])
+            length = len(call[1][0]) - 1
+            indel = ('del', anchor, length)
+            region_end = indel_region_end(mtDNAseq, anchor,
+                                          mtDNAseq[anchor:anchor + length], 'del')
+        else:
+            continue
+        if region_end <= len(mtDNAseq):
+            sites.append({'call': call, 'indel': indel, 'anchor': anchor,
+                          'end': region_end, 'depth': 0, 'alt': 0})
+    if not sites:
+        return
+    sam_handle = gzip.open(sam_file, 'rt') if sam_file.endswith('gz') else open(sam_file)
+    for line in sam_handle:
+        if line.startswith('@'):
+            continue
+        fields = line.split('\t')
+        read_start = int(fields[3])
+        read_end = read_start - 1 + sum(int(n) for n, op in
+                                        re.findall(r'(\d+)([MDN=X])', fields[5]))
+        read_indel_set = None
+        depth_positions = None
+        for s in sites:
+            # quick check: the read must reach from the anchor to the end of
+            # the repeat
+            if read_start > s['anchor'] or read_end < s['end']:
+                continue
+            if depth_positions is None:
+                depth_positions = set(parse_mismatches_from_cigar_md(
+                    line, minqs=minqs, tail_mismatch=tail_mismatch,
+                    return_depth_positions=True)[-1].tolist())
+            if s['anchor'] in depth_positions and s['end'] in depth_positions:
+                s['depth'] += 1
+                if read_indel_set is None:
+                    read_indel_set = set(read_indels(fields))
+                if s['indel'] in read_indel_set:
+                    s['alt'] += 1
+    sam_handle.close()
+    unsupported = []
+    for s in sites:
+        if s['depth'] == 0:
+            continue
+        call, rd, totrd = s['call'], s['alt'], s['depth']
+        if rd == 0:
+            unsupported.append(call)
+            continue
+        hetfreq = heteroplasmy(rd, totrd)
+        call[2] = totrd
+        call[4] = [rd]
+        call[7] = [hetfreq]
+        if totrd <= 40:
+            call[8] = [CIW_LOW(hetfreq, totrd)]
+            call[9] = [CIW_UP(hetfreq, totrd)]
+        else:
+            call[8] = [CIAC_LOW(rd, totrd)]
+            call[9] = [CIAC_UP(rd, totrd)]
+    indel_calls[:] = [c for c in indel_calls if not any(c is u for u in unsupported)]
 
 def join_allele_strand_count(allele_strand_count):
     """A patch to get allele strand counts for mismatches in the same format as those for indels."""
@@ -899,19 +1063,34 @@ def join_allele_strand_count(allele_strand_count):
         f.append([";".join([str(i) for i in j])])
     return f
 
-def mismatch_detection(sam=None, coverage_data=None, tail_mismatch=5):
+def mismatch_detection(sam=None, tail_mismatch=5, minqs=25, return_depth=False):
+    """ Count mismatch alleles and depth per reference position.
+
+    DP is the number of reads covering the position with a base that passes
+    the same filters as mismatch alleles (base quality >= minqs, at least
+    tail_mismatch bases from the read ends), so that allele_DP / DP is an
+    unbiased heteroplasmy fraction. (A depth from samtools depth also counts
+    the read ends, where mismatches are never counted, which biased
+    heteroplasmy low, increasingly so for shorter reads.)
+    """
     if sam.endswith("gz"):
-        sam_handle = gzip.GzipFile(sam, mode='r')
+        sam_handle = gzip.open(sam, mode='rt')
     else:
         sam_handle = open(sam, 'r')
 
     mismatch_dict = {}
+    depth = np.zeros(100000, dtype=np.int64)
     for r in sam_handle:
         if r.startswith("@"):
             continue
         (positions_ref, positions_read, all_ref, all_mism,
-         all_qs, strand) = parse_mismatches_from_cigar_md(r,
-                                                          tail_mismatch=tail_mismatch)
+         all_qs, strand, depth_positions) = parse_mismatches_from_cigar_md(
+             r, minqs=minqs, tail_mismatch=tail_mismatch, return_depth_positions=True)
+        if len(depth_positions) > 0:
+            if depth_positions.max() >= len(depth):
+                depth = np.concatenate([depth, np.zeros(depth_positions.max() + 1,
+                                                        dtype=np.int64)])
+            depth[depth_positions] += 1
         if positions_ref == []:
             continue
         for mut in zip(positions_ref, positions_read, all_ref, all_mism, all_qs):
@@ -933,13 +1112,15 @@ def mismatch_detection(sam=None, coverage_data=None, tail_mismatch=5):
                     mismatch_dict[POS].allele_DP.append(1)
                     mismatch_dict[POS].allele_strand_count.append(allele_strand_counter(strand))
             else:
-                # DP needs to be parsed from bcftools/bedtools output
-                mismatch_dict[POS] = SimpleNamespace(POS=POS, REF=REF,
-                                                     DP=coverage_data[POS],
+                mismatch_dict[POS] = SimpleNamespace(POS=POS, REF=REF, DP=0,
                                                      alleles=[allele],
                                                      allele_DP=[1],
                                                      allele_strand_count=[allele_strand_counter(strand)])
     sam_handle.close()
+    for POS in mismatch_dict:
+        mismatch_dict[POS].DP = int(depth[POS])
+    if return_depth:
+        return mismatch_dict, depth
     return mismatch_dict
 
 def get_consensus_single(i, hf_max=0.8, hf_min=0.2):

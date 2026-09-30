@@ -66,8 +66,11 @@ def test_count_variants_and_summary(tmp_path):
     vcf = write(tmp_path / "s1.vcf", VCF_HEADER.format(samples="s1") +
                 "chrM\t73\t.\tA\tG\t.\tPASS\tAC=1;AN=1\tGT:DP:HF\t1:100:1.0\n"
                 "chrM\t150\t.\tC\tT,A\t.\tPASS\tAC=1,1;AN=1\tGT:DP:HF\t1:100:0.85,0.1\n"
-                "chrM\t200\t.\tA\tG\t.\tPASS\tAC=1;AN=1\tGT:DP:HF\t1:100:0.3\n")
-    assert count_variants(vcf, hf_threshold=0.8) == (4, 1, 1, 2)
+                "chrM\t200\t.\tA\tG\t.\tPASS\tAC=1;AN=1\tGT:DP:HF\t1:100:0.3\n"
+                "chrM\t300\t.\tT\tC\t.\tPASS\tAC=1;AN=1\tGT:DP:HF\t1:1000:0.985\n"
+                "chrM\t400\t.\tG\tA\t.\tPASS\tAC=1;AN=1\tGT:DP:HF\t1:1000:0.01\n")
+    # homoplasmic: 1.0, 0.985; heteroplasmic: 0.85, 0.1, 0.3; low-level: 0.01
+    assert count_variants(vcf, homoplasmy_threshold=0.97, heteroplasmy_min=0.03) == (6, 2, 3, 1)
 
     cov = write(tmp_path / "s1.cov", "chrM\t1\t10\nchrM\t2\t2\nchrM\t3\t0\nchrM\t4\t20\n")
     assert read_coverage(cov, min_depth=5) == (50.0, 8.0)
@@ -75,6 +78,7 @@ def test_count_variants_and_summary(tmp_path):
     best = write(tmp_path / "s1_best.csv", "s1,H1;H1a\n")
     out = tmp_path / "summary.txt"
     summarize_samples([{"sample": "s1", "best_results": best, "vcf": vcf, "coverage": cov}],
-                      {"s1": 3}, str(out), hf_threshold=0.8, min_depth=5)
+                      {"s1": 3}, str(out), homoplasmy_threshold=0.97,
+                      heteroplasmy_min=0.03, min_depth=5)
     row = out.read_text().splitlines()[-1].split("\t")
-    assert row == ["s1", "50.0", "8.0", "H1;H1a", "4", "1", "1", "2", "3"]
+    assert row == ["s1", "50.0", "8.0", "H1;H1a", "6", "2", "3", "1", "3"]
