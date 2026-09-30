@@ -30,15 +30,23 @@ Installing MToolBox is as easy as running
    cd MToolBox_snakemake
    bash install.sh
 
-The setup script ``install.sh`` will:
+The setup script ``install.sh`` (which can be run from any folder) will:
 
-- install the ``mtoolbox`` conda environment with all the required dependencies
-- create a command (``mtoolbox-activate``) which will be used to activate the MToolBox conda environment and add the folders of MToolBox executables and utilities to your ``PATH``.
+- create the ``mtoolbox`` conda environment with all the required dependencies, or update it if it already exists (``mamba`` is used if available, as it is much faster)
+- add a command (``mtoolbox-activate``) to ``~/.bashrc``, which activates the MToolBox conda environment and adds the folders of MToolBox executables and utilities to your ``PATH``. Running ``install.sh`` again replaces it rather than adding a second copy.
+
+Open a new shell (or run ``source ~/.bashrc``) and run ``mtoolbox-activate`` to start using MToolBox.
+
+Options (see ``bash install.sh -h``):
+
+- ``-n <name>``: name of the conda environment (default: ``mtoolbox``)
+- ``-r <file>``: shell startup file for ``mtoolbox-activate`` (default: ``~/.bashrc``; e.g. ``-r ~/.bash_profile`` on macOS)
+- ``-s``: skip creating/updating the environment, only (re)write ``mtoolbox-activate``
 
 Notes
 -----
 
-- GATK 3 (used to left-align indels) only works with Java 8, which is installed in the ``mtoolbox`` environment. The ``gatk-framework`` launcher prefers ``$JAVA_HOME/bin/java`` when ``JAVA_HOME`` is set, so if it points to a newer Java, GATK fails with ``Could not find walker with name: LeftAlignIndels``. Run ``unset JAVA_HOME`` after activating the environment.
+- GATK 3 (used to left-align indels) only works with Java 8, which is installed in the ``mtoolbox`` environment. Always activate the environment (``mtoolbox-activate`` or ``conda activate mtoolbox``), which points ``JAVA_HOME`` to it: if you instead only add the environment's ``bin`` folder to your ``PATH`` while ``JAVA_HOME`` points to a newer Java, GATK fails with ``Could not find walker with name: LeftAlignIndels``.
 - Haplogroup prediction needs MUSCLE 3.8 (``muscle=3.8.1551`` in the environment): MUSCLE 5 cannot align whole mitochondrial genomes.
 
 .. _`MToolBox_snakemake`: https://github.com/mitoNGS/MToolBox_snakemake
