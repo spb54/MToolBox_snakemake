@@ -170,3 +170,9 @@ class TestSNPcalling(unittest.TestCase):
     # 
     #     # Then
     #     self.assertEqual(expected, result)
+
+
+def test_get_consensus_single_no_variants():
+    # a sample identical to the reference has no variants
+    from modules.mtVariantCaller import get_consensus_single
+    assert get_consensus_single([]) == []

@@ -981,7 +981,8 @@ def get_consensus_single(i, hf_max=0.8, hf_min=0.2):
                 consensus_value.append(res)
             else:
                 pass
-        return consensus_value
+    # also when there are no variants: fasta_output needs a list, not None
+    return consensus_value
 
 
 def get_consensus(dict_of_dicts, hf_max, hf_min):
