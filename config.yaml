@@ -32,3 +32,7 @@ mtvcf_main_analysis:
     # minimum coverage depth for a mutation to be kept
     minrd: 5
     tail_mismatch: 5
+
+prioritization:
+    # heteroplasmy threshold used to split heteroplasmic variants in the summary
+    hf_threshold: 0.8

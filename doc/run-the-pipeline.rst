@@ -67,8 +67,38 @@ Available wrappers
 ------------------
 
 - `MToolBox-variant-calling`_
+- `MToolBox-variant-annotation`_
+- `MToolBox-human-haplogroup-prediction`_
+- `MToolBox-human-prioritization`_
+
+Each wrapper runs variant calling first, so any of them can be started from raw reads.
 
 MToolBox-variant-calling
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 Performs QC, quality trimming of raw reads, read alignment, alignment filtering, variant calling. The final output is a VCF file.
+
+MToolBox-variant-annotation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Annotates the merged VCF of each reference genome pair with `mtoolnote <https://github.com/mitoNGS/mtoolnote>`_, writing :code:`results/vcf/<ref_genome_mt>_<ref_genome_n>.annotated.vcf`.
+The species passed to mtoolnote is the :code:`species` column of :code:`data/reference_genomes.tab`, or :code:`species` in :code:`config.yaml` if set. Use :code:`human` (:code:`hsapiens` is also accepted) for human, or one of the non-human species supported by mtoolnote (e.g. :code:`ggallus`, :code:`mmusculus`); non-human annotation queries Ensembl BioMart, so it needs internet access.
+
+MToolBox-human-haplogroup-prediction
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Human only (analyses whose reference species is human). Assigns a Phylotree (build 17) haplogroup to each sample's consensus fasta with mt-classifier, which aligns it to RSRS with MUSCLE 3.8. Outputs, per sample, in :code:`results/<sample>/haplogroup/`:
+
+- :code:`<sample>_<ref_genome_mt>_<ref_genome_n>.csv` and :code:`.sorted.csv`: haplogroup predictions
+- :code:`..._merged_diff.csv`: variants relative to RSRS, the MHCS of the predicted haplogroup and rCRS
+- :code:`..._best_results.csv`: best predicted haplogroup(s)
+
+and :code:`results/haplogroups/<ref_genome_mt>_<ref_genome_n>_best_results.csv` with the best haplogroup(s) of all samples.
+
+MToolBox-human-prioritization
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Human only. Runs the complete analysis: variant calling, haplogroup prediction, annotation, then
+
+- :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_prioritized_variants.txt`: variants private to a sample, i.e. differing from RSRS, from the MHCS of its haplogroup and from rCRS, with their mtoolnote annotations, sorted by ascending nucleotide variability (:code:`NtVarH`)
+- :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_summary.txt`: per sample coverage, mean depth, best haplogroup(s), number of variants (homoplasmic, heteroplasmic above/below :code:`prioritization: hf_threshold` in :code:`config.yaml`, default 0.8) and of prioritized variants

@@ -49,12 +49,13 @@ def ref_genome_mt_to_species(ref_genome_mt=None, reference_tab=None):
     Returns:
         string
     """
-    # TODO:
-    # - it should throw an error if multiple instances of species are found in the table, atm it keeps the last one it finds
-    for row in reference_tab.itertuples():
-        if getattr(row, "ref_genome_mt") == ref_genome_mt:
-            species = getattr(row, "species")
-    return species
+    species = {getattr(row, "species") for row in reference_tab.itertuples()
+               if getattr(row, "ref_genome_mt") == ref_genome_mt}
+    if len(species) != 1:
+        raise ValueError("Expected exactly one species for {} in "
+                         "reference_genomes.tab, found: {}".format(
+                             ref_genome_mt, sorted(species)))
+    return species.pop()
 
 def get_analysis_species(ref_genome_mt, reference_tab=None, config_species=None):
     """ Return a string of species used for analysis.
@@ -70,6 +71,33 @@ def get_analysis_species(ref_genome_mt, reference_tab=None, config_species=None)
     else:
         species = ref_genome_mt_to_species(ref_genome_mt=ref_genome_mt, reference_tab=reference_tab)
     return species
+
+# species names that refer to human, which is the only species with
+# haplogroup prediction and which mtoolnote calls "human"
+HUMAN_SPECIES = {"human", "hsapiens", "homo_sapiens", "homo sapiens"}
+
+def is_human(species):
+    """ Return True if species refers to Homo sapiens. """
+    return str(species).strip().lower() in HUMAN_SPECIES
+
+def mtoolnote_species(species):
+    """ Return the species name expected by mtoolnote.annotate. """
+    return "human" if is_human(species) else species
+
+def get_human_analyses(analysis_tab, reference_tab=None, config_species=None):
+    """ Return the rows of analysis_tab whose mt reference is human.
+
+    Args:
+        analysis_tab: table of analyses
+        reference_tab: table of reference genomes
+        config_species: species from config file, overrides reference_tab
+    Returns:
+        pd data frame
+    """
+    keep = [is_human(get_analysis_species(mt, reference_tab=reference_tab,
+                                          config_species=config_species))
+            for mt in analysis_tab["ref_genome_mt"]]
+    return analysis_tab[keep]
 
 # TODO: infolder is not used anywhere
 def get_datasets_for_symlinks(df, sample=None, library=None, d=None,
@@ -265,17 +293,50 @@ def get_fasta_files(df: pd.DataFrame,
     return outpaths
 
 
-def get_haplo_prediction_files(df, res_dir="results"):
+def get_haplo_prediction_files(df, res_dir="results", ref_genome_mt=None,
+                               ref_genome_n=None, suffix=".csv"):
+    """ Return per-sample haplogroup prediction files.
+
+    Args:
+        df: analysis table (human analyses only)
+        res_dir: output directory name
+        ref_genome_mt, ref_genome_n: if given, keep only this reference pair
+        suffix: output file suffix, e.g. '.csv' or '_best_results.csv'
+    Returns:
+        list of paths
+    """
     outpaths = []
     for row in df.itertuples():
+        if ref_genome_mt is not None and row.ref_genome_mt != ref_genome_mt:
+            continue
+        if ref_genome_n is not None and row.ref_genome_n != ref_genome_n:
+            continue
         outpaths.append(
-            ("{results}/{sample}/{sample}_"
-             "{ref_genome_mt}_{ref_genome_n}.csv").format(
+            ("{results}/{sample}/haplogroup/{sample}_"
+             "{ref_genome_mt}_{ref_genome_n}{suffix}").format(
                 results=res_dir,
                 sample=getattr(row, "sample"),
-                ref_genome_mt=getattr(row, "ref_genome_mt"),
-                ref_genome_n=getattr(row, "ref_genome_n")))
+                ref_genome_mt=row.ref_genome_mt,
+                ref_genome_n=row.ref_genome_n,
+                suffix=suffix))
     return outpaths
+
+
+def get_ref_pair_files(df, template, res_dir="results"):
+    """ Return one path per (ref_genome_mt, ref_genome_n) pair in df.
+
+    Args:
+        df: analysis table
+        template: path template with {results}, {ref_genome_mt}
+            and {ref_genome_n} fields
+        res_dir: output directory name
+    Returns:
+        sorted list of unique paths
+    """
+    return sorted({template.format(results=res_dir,
+                                   ref_genome_mt=row.ref_genome_mt,
+                                   ref_genome_n=row.ref_genome_n)
+                   for row in df.itertuples()})
 
 
 def get_genome_files(df: pd.DataFrame,

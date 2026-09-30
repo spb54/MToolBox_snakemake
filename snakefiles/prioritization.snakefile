@@ -1,5 +1,5 @@
-# Haplogroup prediction for human samples: variant calling, then
-# mt_classifier on each sample's consensus fasta.
+# Complete human analysis: variant calling, haplogroup prediction,
+# functional annotation, variant prioritization and per-sample summary.
 import sys
 from pathlib import Path
 
@@ -16,13 +16,19 @@ _analysis_tab, _reference_tab, _ = parse_config_tabs(analysis_tab_file="data/ana
 _human_analysis_tab = get_human_analyses(_analysis_tab, reference_tab=_reference_tab,
                                          config_species=config["species"])
 if _human_analysis_tab.empty:
-    sys.exit("Haplogroup prediction is only available for human: no analysis in "
+    sys.exit("Prioritization is only available for human: no analysis in "
              "data/analysis.tab has a human mt reference genome.")
 
-rule all_haplo_prediction:
+rule all_prioritization:
     input:
         get_ref_pair_files(_human_analysis_tab,
-                           "{results}/haplogroups/{ref_genome_mt}_{ref_genome_n}_best_results.csv")
+                           "{results}/haplogroups/{ref_genome_mt}_{ref_genome_n}_best_results.csv"),
+        get_ref_pair_files(_human_analysis_tab,
+                           "{results}/prioritization/{ref_genome_mt}_{ref_genome_n}_prioritized_variants.txt"),
+        get_ref_pair_files(_human_analysis_tab,
+                           "{results}/prioritization/{ref_genome_mt}_{ref_genome_n}_summary.txt")
 
 include: "variant_calling.snakefile"
 include: "rules/haplogroup.smk"
+include: "rules/annotation.smk"
+include: "rules/prioritization.smk"

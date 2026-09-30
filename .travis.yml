@@ -14,4 +14,4 @@ install:
   - source activate mtoolbox
   - export PYTHONPATH="$PYTHONPATH:."
 script:
-  - pytest -v test/test_mt_classifier.py
+  - pytest -v test/test_mt_classifier.py modules/tests/test_prioritization.py modules/tests/test_mtVariantCaller.py
