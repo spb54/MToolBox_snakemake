@@ -141,6 +141,23 @@ def bed_output(vcf_records: List, seq_name: str = "seq",
                 out_bed.write("\t".join(str_y) + "\n")
 
 
+def resolve_duplicate_positions(df):
+    """ Keep one consensus variant per position.
+
+    df has one row per consensus variant: position, bases and type
+    ('ins', 'del' or 'mism') in columns 0, 1 and 2. Where a position has
+    several variants, an insertion is reported rather than a deletion or a
+    mismatch, and a deletion rather than a mismatch; among variants of the
+    same type (e.g. two deletion alleles) the first is kept.
+    """
+    priority = df[2].map({'ins': 0, 'del': 1}).fillna(2)
+    keep = (df.assign(_priority=priority)
+              .sort_values([0, '_priority'], kind='mergesort')
+              .drop_duplicates(subset=0, keep='first')
+              .index)
+    return df.loc[sorted(keep)]
+
+
 # TODO: ref_mt is not used, is it necessary?
 # TODO: better to switch position of hf_max and hf_min
 def fasta_output(vcf_dict: Optional[dict] = None, ref_mt=None,
@@ -186,20 +203,7 @@ def fasta_output(vcf_dict: Optional[dict] = None, ref_mt=None,
                 print('no variants found in this contig {}\n'.format(x))
                 pass
             else:
-                df = pd.DataFrame(consensus_single)
-                positions = df[0]
-                dup_positions = positions[positions.duplicated()].values
-                for x in dup_positions:
-                    # check the mut type. If ins, report ins instead of del or mism
-                    d = df[df[0] == x][2]
-                    if 'ins' in d.values:
-                        idx = d[d != 'ins'].index[0]
-                        df.drop(df.index[[idx]], inplace=True)
-                    elif 'del' in d.values:
-                        idx = d[d != 'del'].index[0]
-                        # If ambiguity between mism and del, report deletion
-                        # instead of mism in the consensus
-                        df.drop(df.index[[idx]], inplace=True)
+                df = resolve_duplicate_positions(pd.DataFrame(consensus_single))
                 for idx in df.index:
                     if df[0][idx] in dict_seq.keys():  # if position is in the dict
                         if df[2][idx] == 'mism':  # if mut type is mism

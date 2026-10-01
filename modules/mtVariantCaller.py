@@ -621,9 +621,12 @@ def SearchINDELsintoSAM(readNAME,strand,CIGAR,seq,qs,refposleft,tail=5,Q=25): #T
 def parse_indels(df, Q, minrd, tag):
     boolean_vector1 = df[tag].astype(str).str.contains('delete')
     df = df[~boolean_vector1]
-    #filters on qs
-    boolean_vector2 = np.array(list(map(lambda x:x[0]<Q,df[tag])) or list(map(lambda x:x[1]<Q,df[tag])))
+    #filters on qs: median quality of the bases on either side of the indel
+    boolean_vector2 = np.array([x[0] < Q or x[1] < Q for x in df[tag]], dtype=bool)
     df = df[~boolean_vector2]
+    if df.empty:
+        # no indel left in this sample
+        return df
     df.insert(5,'mean_qs',list(map(lambda x:np.mean(x),df[tag]))) 
     df['genotype'] = df['genotype'].astype(str)
     df_counts = df.groupby(['rleft','strand', 'genotype']).count().reset_index()[['rleft','strand','genotype','Type']]

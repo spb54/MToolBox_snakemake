@@ -201,3 +201,28 @@ def test_read_indels():
     fields = ["r1", "0", "chrM", "100", "60", "5S10M2D5M1I4M", "*", "0", "0", seq, "I" * len(seq)]
     # deletion after 109 (100-109 aligned), insertion of G after 116
     assert read_indels(fields) == [("del", 109, 2), ("ins", 116, "G")]
+
+
+def test_parse_indels_no_indel_left():
+    # all indel reads already discarded for low flanking quality ('delete'):
+    # this used to fail inverting an empty (float) numpy array
+    import pandas as pd
+    from modules.mtVariantCaller import parse_indels
+    df = pd.DataFrame([["Del", "r1", "+", 3106, "range(3107, 3108)", ["delete", "delete"]]],
+                      columns=["Type", "readName", "strand", "rleft", "genotype", "qs_flanking"])
+    assert parse_indels(df, 25, 5, "qs_flanking").empty
+
+
+def test_fasta_output_two_deletions_same_position(tmp_path):
+    # two deletion alleles at the same position, both above hf_max: this
+    # used to fail looking for a variant of another type to drop
+    from modules.BEDoutput import fasta_output
+    ref = "ACGTACGTAC" * 3
+    deletions = [[5, ["TA"], 100, ["T"], [95], [["50;45"]], [30], [0.95], [0.9], [1.0], "del"],
+                 [5, ["TAC"], 100, ["T"], [92], [["46;46"]], [30], [0.92], [0.9], [1.0], "del"]]
+    snp = [12, "G", 100, ["C"], [99], [["50;49"]], "PASS", [0.99], [0.95], [1.0], "mism"]
+    out = tmp_path / "c.fasta"
+    fasta_output(vcf_dict={"s": deletions + [snp]}, contigs=[((1, 30), ref)], fasta_out=str(out))
+    seq = "".join(out.read_text().splitlines()[1:])
+    # the first deletion (of position 6) and the substitution at 12 are applied
+    assert seq == ref[:5] + ref[6:11] + "C" + ref[12:]
