@@ -120,3 +120,18 @@ def test_mt_read_fraction(tmp_path):
     out = tmp_path / "mt.tsv"
     write_mt_read_fraction("s1", [log, log], [sam, sam], str(out))
     assert out.read_text().splitlines()[1].split("\t") == ["s1", "3700", "6", "0.1622"]
+
+
+def test_annotate_vcf_lock_free(tmp_path):
+    # mtoolnote's database opened read-only without locks gives the same
+    # annotation as mtoolnote's default connection
+    mtoolnote = pytest.importorskip("mtoolnote")
+    from modules.annotation import annotate_vcf
+    vcf = write(tmp_path / "in.vcf", "##fileformat=VCFv4.0\n"
+                '##FORMAT=<ID=GT,Number=1,Type=String,Description="">\n'
+                '##INFO=<ID=AC,Number=1,Type=Integer,Description="">\n'
+                "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\ts1\n"
+                "chrM\t3243\t.\tA\tG\t.\tPASS\tAC=1\tGT\t1\n")
+    annotate_vcf(vcf, str(tmp_path / "out.vcf"), "human")
+    record = [l for l in (tmp_path / "out.vcf").read_text().splitlines() if not l.startswith("#")][0]
+    assert "Locus=MT-TL1" in record
