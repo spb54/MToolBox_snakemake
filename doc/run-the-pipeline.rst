@@ -131,3 +131,5 @@ To flag alleles carried by NUMTs, first list them from a BED of NUMT coordinates
         --mt-fasta data/genomes/<mt fasta> --gmap-db <ref_genome_mt> --out numt_alleles.tsv
     python $MTOOLBOX_DIR/scripts/mt_sample_comparison.py compare \
         --vcf results/vcf/<ref_genome_mt>_<ref_genome_n>.annotated.vcf --numt-alleles numt_alleles.tsv
+
+On a SLURM cluster, :code:`scripts/run_comparison.sh` runs both steps as one job: copy it to the analysis folder, edit the settings at its top (account, partition, paths, reference names) and submit it with :code:`sbatch run_comparison.sh`. The NUMT allele list is made only once and reused by later runs.
