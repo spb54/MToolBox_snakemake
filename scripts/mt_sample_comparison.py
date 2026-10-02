@@ -574,7 +574,11 @@ def write_outputs(prefix, samples, groups, rows, present_in, numts, args):
                         status, numts.get(key, 0), others]
                         + [v["annotations"][k] for k in ANNOTATIONS]) + "\n")
                 statuses = [calls[s]["final_status"] for s, _ in members]
-                if all(st == "homoplasmic" for st in statuses):
+                if len(members) == 1:
+                    # nothing to compare with: the pattern of e.g. a cfDNA-only
+                    # individual must not count as a cfDNA_only variant
+                    sharing = "single_sample"
+                elif all(st == "homoplasmic" for st in statuses):
                     sharing = "homoplasmic_all"
                 else:
                     sharing = "+".join(sorted({t for (s, t) in members
