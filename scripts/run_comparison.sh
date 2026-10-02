@@ -21,6 +21,8 @@ REF_N=GRCh38                 # ref_genome_n
 MT_FASTA=data/genomes/rCRS.fasta
 NUMT_BED=numts.bed           # leave empty to skip the NUMT allele list
 UNMASKED_GENOME=             # UNMASKED nuclear genome fasta, needed with NUMT_BED
+SAMPLES=                     # tsv with columns sample, individual, type; empty:
+                             # split sample names at the last "_" (P01_tumour)
 EXCLUDE=""                   # samples to leave out, e.g. "P01_cfDNA P02_normal"
 OUT=comparison/mt_comparison
 # ------------------
@@ -47,6 +49,11 @@ if [[ -n "$NUMT_BED" ]]; then
     NUMT_ARGS=(--numt-alleles numt_alleles.tsv)
 fi
 
+SAMPLE_ARGS=()
+if [[ -n "$SAMPLES" ]]; then
+    SAMPLE_ARGS=(--samples "$SAMPLES")
+fi
+
 EXCLUDE_ARGS=()
 if [[ -n "$EXCLUDE" ]]; then
     EXCLUDE_ARGS=(--exclude $EXCLUDE)
@@ -55,7 +62,8 @@ fi
 echo "== Comparing samples ($(date))"
 mkdir -p "$(dirname "$OUT")"
 $COMPARE compare --vcf "results/vcf/${REF_MT}_${REF_N}.annotated.vcf" \
-    "${NUMT_ARGS[@]+"${NUMT_ARGS[@]}"}" "${EXCLUDE_ARGS[@]+"${EXCLUDE_ARGS[@]}"}" \
+    "${NUMT_ARGS[@]+"${NUMT_ARGS[@]}"}" "${SAMPLE_ARGS[@]+"${SAMPLE_ARGS[@]}"}" \
+    "${EXCLUDE_ARGS[@]+"${EXCLUDE_ARGS[@]}"}" \
     --out "$OUT"
 
 echo "== Done ($(date)). Sample concordance:"
