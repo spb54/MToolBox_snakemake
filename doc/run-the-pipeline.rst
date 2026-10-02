@@ -105,3 +105,27 @@ Human only. Runs the complete analysis: variant calling, haplogroup prediction, 
 - :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_prioritized_variants.txt`: variants private to a sample, i.e. differing from RSRS, from the MHCS of its haplogroup and from rCRS, with their mtoolnote annotations, sorted by ascending nucleotide variability (:code:`NtVarH`)
 - :code:`results/<sample>/<sample>_<ref_genome_mt>_<ref_genome_n>_mtDNA_reads.tsv`: number of reads after trimming (all libraries of the sample, both mates of surviving pairs plus surviving unpaired reads), number of reads mapped to the mtDNA (primary alignments, before duplicate removal, so that duplicates are counted in both) and their percentage
 - :code:`results/prioritization/<ref_genome_mt>_<ref_genome_n>_summary.txt`: per sample reads after trimming, mtDNA reads and their percentage, coverage, mean depth, best haplogroup(s), number of variants, split by heteroplasmy fraction (HF) into homoplasmic (HF >= :code:`prioritization: homoplasmy_threshold` in :code:`config.yaml`, default 0.97), heteroplasmic (HF >= :code:`heteroplasmy_min`, default 0.03) and low-level, and number of prioritized variants
+
+Optional: comparing samples of the same individual
+--------------------------------------------------
+
+:code:`scripts/mt_sample_comparison.py` is not part of the pipeline: run it on the pipeline results, from the analysis folder, to compare variants between samples of the same individual (e.g. tumour, normal tissue and cell-free DNA).
+
+.. code-block:: bash
+
+    python $MTOOLBOX_DIR/scripts/mt_sample_comparison.py compare \
+        --vcf results/vcf/<ref_genome_mt>_<ref_genome_n>.annotated.vcf
+
+For every allele in the merged VCF it counts reads in every sample directly from the alignments, so that evidence below the calling threshold is seen too, and calls an allele present when the lower bound of the 95% confidence interval of its heteroplasmy reaches :code:`--min-hf` (default 0.03: low-coverage samples need more evidence), it is above the background noise (the error rate of the sample and the allele's frequency in the other individuals, FDR :code:`--alpha`) and it is seen on both strands. Each sample also gets the lowest heteroplasmy it could detect at that position, so that an allele is reported as absent only where it would have been detected, and :code:`not_informative` otherwise. Samples are grouped by splitting their names at the last underscore (:code:`P01_tumour` is sample type :code:`tumour` of individual :code:`P01`), or with :code:`--samples`, a tsv with columns :code:`sample`, :code:`individual` and :code:`type`.
+
+Outputs (prefix :code:`--out`, default :code:`comparison/mt_comparison`): :code:`_long.tsv` (one row per sample and variant), :code:`_by_individual.tsv` (one row per variant and individual, with its sharing pattern, e.g. :code:`tumour_only` or :code:`cfDNA+tumour_only`, and flags :code:`numt_allele`, :code:`recurrent`, :code:`strand_bias`, :code:`low_power`) and :code:`_overlap.tsv` (number of variants per sharing pattern and individual).
+
+To flag alleles carried by NUMTs, first list them from a BED of NUMT coordinates and the **unmasked** nuclear genome (the NUMT sequences are aligned to the mtDNA with the GMAP database built by the pipeline), then pass the list to :code:`compare`:
+
+.. code-block:: bash
+
+    python $MTOOLBOX_DIR/scripts/mt_sample_comparison.py numt-alleles \
+        --bed numts.bed --genome /path/to/unmasked/GRCh38.fa \
+        --mt-fasta data/genomes/<mt fasta> --gmap-db <ref_genome_mt> --out numt_alleles.tsv
+    python $MTOOLBOX_DIR/scripts/mt_sample_comparison.py compare \
+        --vcf results/vcf/<ref_genome_mt>_<ref_genome_n>.annotated.vcf --numt-alleles numt_alleles.tsv
