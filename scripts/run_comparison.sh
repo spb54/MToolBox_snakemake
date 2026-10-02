@@ -10,7 +10,7 @@
 #SBATCH -t 12:00:00
 #SBATCH -o mt_comparison_%j.log
 
-set -euo pipefail
+set -eo pipefail
 
 # ---- settings ----
 MTOOLBOX_DIR=/path/to/MToolBox_snakemake
@@ -29,6 +29,8 @@ OUT=comparison/mt_comparison
 
 eval "$("$CONDA" shell.bash hook)"
 conda activate mtoolbox
+# only now: conda's activation scripts use unset variables
+set -u
 cd "$ANALYSIS_DIR"
 COMPARE="python $MTOOLBOX_DIR/scripts/mt_sample_comparison.py"
 
