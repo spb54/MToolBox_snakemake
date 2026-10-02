@@ -120,6 +120,8 @@ For every allele in the merged VCF it counts reads in every sample directly from
 
 Outputs (prefix :code:`--out`, default :code:`comparison/mt_comparison`): :code:`_long.tsv` (one row per sample and variant), :code:`_by_individual.tsv` (one row per variant and individual, with its sharing pattern, e.g. :code:`tumour_only` or :code:`cfDNA+tumour_only`, and flags :code:`numt_allele`, :code:`recurrent`, :code:`strand_bias`, :code:`low_power`) and :code:`_overlap.tsv` (number of variants per sharing pattern and individual).
 
+It also checks that the samples of each individual agree, in :code:`_concordance.tsv`: each sample's best haplogroup is compared with the individual's (:code:`identical`, :code:`nested`, e.g. :code:`H1` and :code:`H1a`, or :code:`different`), and every variant homoplasmic in some samples of the individual must be homoplasmic in the others too, where they have at least :code:`--concordance-min-depth` reads. A sample that disagrees with the majority of its individual's samples at more than :code:`--max-discordant` homoplasmic variants (default 2) is flagged :code:`likely_mismatch` (with two samples, both are flagged), which points to a sample swap or mix-up; samples can then be left out with :code:`--exclude`.
+
 To flag alleles carried by NUMTs, first list them from a BED of NUMT coordinates and the **unmasked** nuclear genome (the NUMT sequences are aligned to the mtDNA with the GMAP database built by the pipeline), then pass the list to :code:`compare`:
 
 .. code-block:: bash

@@ -22,7 +22,9 @@ compare
     allele is carried by NUMTs or recurs in other individuals. Writes a
     long table (one row per sample and variant), a per-individual table
     (one row per variant) and per-individual counts of sharing patterns
-    (e.g. tumour-only, tumour+cfDNA).
+    (e.g. tumour-only, tumour+cfDNA). Also checks that the samples of an
+    individual agree: same (or nested) best haplogroup, and no variant
+    homoplasmic in one sample missing from another (a sample swap or mix-up).
 
 Samples are grouped by individual using --samples (a tsv with columns
 sample, individual and type) or, by default, by splitting sample names at
@@ -263,6 +265,111 @@ def load_numt_alleles(path):
                 for r in csv.DictReader(fh, delimiter="\t")}
 
 
+# -------------------------------------------------------------- concordance
+
+def read_haplogroups(path):
+    """ sample -> list of best haplogroups, from the pipeline's
+    results/haplogroups/<mt>_<n>_best_results.csv; {} if not found. """
+    if not path or not os.path.exists(path):
+        return {}
+    haplogroups = {}
+    with open(path) as fh:
+        for row in csv.reader(fh):
+            if row and row[0] != "SampleID":
+                haplogroups[row[0]] = [h for h in (row[1] if len(row) > 1 else "").split(";") if h]
+    return haplogroups
+
+
+def haplogroup_relation(a, b):
+    """ 'identical', 'nested' (one is a sub-haplogroup of the other by
+    name, e.g. H1 and H1a), 'different' or 'unknown', for two lists of
+    best haplogroups. """
+    if not a or not b:
+        return "unknown"
+    if set(a) == set(b):
+        return "identical"
+    if any(x.startswith(y) or y.startswith(x) for x in a for y in b):
+        return "nested"
+    return "different"
+
+
+def homoplasmic_discordance(hf_depth, min_depth=20, homoplasmy=0.97, absent_below=0.5):
+    """ Homoplasmic variants on which a sample disagrees with the other
+    samples of the same individual.
+
+    For each variant homoplasmic (HF >= homoplasmy) in at least one sample,
+    the samples with at least min_depth reads are split into homoplasmic and
+    absent (HF < absent_below); the minority group disagrees with the
+    individual (both groups when they are the same size, e.g. two samples).
+
+    Args:
+        hf_depth: {variant: {sample: (hf, depth)}} for one individual
+    Returns:
+        {sample: (n_compared, [variants on which it disagrees])}
+    """
+    samples = sorted({s for by_sample in hf_depth.values() for s in by_sample})
+    result = {s: [0, []] for s in samples}
+    for variant, by_sample in hf_depth.items():
+        covered = {s: hf for s, (hf, depth) in by_sample.items() if depth >= min_depth}
+        homoplasmic = [s for s, hf in covered.items() if hf >= homoplasmy]
+        if not homoplasmic:
+            continue
+        absent = [s for s, hf in covered.items() if hf < absent_below]
+        for s in covered:
+            result[s][0] += 1
+        if not absent:
+            continue
+        if len(homoplasmic) > len(absent):
+            minority = absent
+        elif len(absent) > len(homoplasmic):
+            minority = homoplasmic
+        else:
+            minority = homoplasmic + absent
+        for s in minority:
+            result[s][1].append(variant)
+    return {s: (n, d) for s, (n, d) in result.items()}
+
+
+def write_concordance(prefix, samples, groups, haplogroups, snv_rows, args):
+    """ Per-sample haplogroup and homoplasmic-variant concordance with the
+    other samples of the same individual. Returns the samples to check. """
+    by_individual = defaultdict(list)
+    for s in samples:
+        by_individual[groups[s][0]].append(s)
+    to_check = []
+    with open(prefix + "_concordance.tsv", "w") as out:
+        out.write("individual\tsample\ttype\thaplogroup\tindividual_haplogroup\t"
+                  "haplogroup_relation\thomoplasmic_compared\thomoplasmic_discordant\t"
+                  "discordant_positions\tverdict\n")
+        for ind, members in by_individual.items():
+            # the individual's haplogroup: the most frequent among its samples
+            calls = [tuple(haplogroups.get(s, [])) for s in members]
+            known = [c for c in calls if c]
+            reference = list(max(set(known), key=known.count)) if known else []
+            hf_depth = {}
+            for v, ev in snv_rows:
+                hf_depth["{}{}>{}".format(v["pos"], v["ref"], v["alt"])] = {
+                    s: (ev[s]["hf"], ev[s]["depth"]) for s in members}
+            discordance = homoplasmic_discordance(hf_depth, args.concordance_min_depth,
+                                                  args.homoplasmy)
+            for s in members:
+                hap = haplogroups.get(s, [])
+                relation = haplogroup_relation(hap, reference) if len(members) > 1 else "single_sample"
+                n, discordant = discordance.get(s, (0, []))
+                if len(discordant) > args.max_discordant:
+                    verdict = "likely_mismatch"
+                elif relation == "different":
+                    verdict = "check_haplogroup"
+                else:
+                    verdict = "ok"
+                if verdict != "ok":
+                    to_check.append((s, verdict))
+                out.write("\t".join([ind, s, groups[s][1], ";".join(hap), ";".join(reference),
+                                     relation, str(n), str(len(discordant)),
+                                     ",".join(discordant[:20]), verdict]) + "\n")
+    return to_check
+
+
 # ------------------------------------------------------------------ compare
 
 def vcf_contig(vcf):
@@ -301,6 +408,10 @@ def _float(x, default=None):
 
 def compare(args):
     samples, variants = candidate_variants(args.vcf)
+    unknown = set(args.exclude) - set(samples)
+    if unknown:
+        sys.exit("--exclude: not in the VCF: " + ", ".join(sorted(unknown)))
+    samples = [s for s in samples if s not in set(args.exclude)]
     groups = read_sample_sheet(args.samples, samples)
     numts = load_numt_alleles(args.numt_alleles)
     vcf_base = re.sub(r"(\.annotated)?\.vcf(\.gz)?$", "", os.path.basename(args.vcf))
@@ -413,6 +524,17 @@ def compare(args):
                                             if e["status"] in ("present", "homoplasmic")}
 
     write_outputs(args.out, samples, groups, all_rows, present_in, numts, args)
+
+    haplogroup_file = args.haplogroups or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(args.vcf))), "haplogroups",
+        vcf_base + "_best_results.csv")
+    to_check = write_concordance(args.out, samples, groups, read_haplogroups(haplogroup_file),
+                                 [(v, {s: evidence[(s, i)] for s in samples})
+                                  for i, v in enumerate(snvs)], args)
+    print("Wrote {}_concordance.tsv".format(args.out))
+    for s, verdict in to_check:
+        print("WARNING: {} {}: check {}_concordance.tsv".format(s, verdict, args.out),
+              file=sys.stderr)
 
 
 def write_outputs(prefix, samples, groups, rows, present_in, numts, args):
@@ -538,6 +660,15 @@ def main(argv=None):
                    help="lowest background error rate allowed (default 1e-4)")
     c.add_argument("--recurrent", type=int, default=2,
                    help="flag alleles present in at least this many other individuals")
+    c.add_argument("--exclude", nargs="+", default=[], metavar="SAMPLE",
+                   help="samples to leave out, e.g. ones flagged in _concordance.tsv")
+    c.add_argument("--haplogroups", help="best haplogroups per sample (default: "
+                   "results/haplogroups/<mt>_<n>_best_results.csv next to the VCF's folder)")
+    c.add_argument("--concordance-min-depth", type=int, default=20,
+                   help="depth needed to compare a homoplasmic variant between samples (default 20)")
+    c.add_argument("--max-discordant", type=int, default=2,
+                   help="homoplasmic variants a sample may lack before it is flagged as a "
+                   "likely mismatch with its individual (default 2)")
     c.add_argument("--out", default="comparison/mt_comparison", help="output prefix")
 
     args = parser.parse_args(argv)

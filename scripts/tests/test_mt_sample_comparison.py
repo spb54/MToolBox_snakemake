@@ -50,3 +50,34 @@ def test_sam_differences():
     diffs = sam_differences(sam, mt)
     assert set(diffs) == {(5, "A", "T"), (13, "A", "C")}
     assert diffs[(5, "A", "T")] == {"numt1"}
+
+
+def test_homoplasmic_discordance_finds_the_odd_sample():
+    from scripts.mt_sample_comparison import homoplasmic_discordance
+    # tumour, normal, cfDNA agree; 'swap' lacks two of their homoplasmic
+    # variants and carries one of its own
+    hf_depth = {
+        "73A>G": {"tumour": (1.0, 900), "normal": (0.99, 800), "cfDNA": (1.0, 90), "swap": (0.0, 500)},
+        "263A>G": {"tumour": (1.0, 900), "normal": (1.0, 800), "cfDNA": (1.0, 90), "swap": (0.01, 500)},
+        "152T>C": {"tumour": (0.0, 900), "normal": (0.0, 800), "cfDNA": (0.0, 90), "swap": (1.0, 500)},
+        # too shallow in cfDNA to compare; heteroplasmic in normal (not a disagreement)
+        "750A>G": {"tumour": (1.0, 900), "normal": (0.7, 800), "cfDNA": (0.0, 10), "swap": (1.0, 500)},
+    }
+    result = homoplasmic_discordance(hf_depth, min_depth=20)
+    assert result["swap"] == (4, ["73A>G", "263A>G", "152T>C"])
+    assert result["tumour"] == (4, [])
+    assert result["cfDNA"] == (3, [])
+
+
+def test_homoplasmic_discordance_two_samples_disagreeing():
+    from scripts.mt_sample_comparison import homoplasmic_discordance
+    result = homoplasmic_discordance({"73A>G": {"a": (1.0, 500), "b": (0.0, 500)}})
+    assert result == {"a": (1, ["73A>G"]), "b": (1, ["73A>G"])}
+
+
+def test_haplogroup_relation():
+    from scripts.mt_sample_comparison import haplogroup_relation
+    assert haplogroup_relation(["H1"], ["H1"]) == "identical"
+    assert haplogroup_relation(["H1a"], ["H1"]) == "nested"
+    assert haplogroup_relation(["U5b"], ["H1"]) == "different"
+    assert haplogroup_relation([], ["H1"]) == "unknown"
