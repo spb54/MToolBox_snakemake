@@ -15,7 +15,10 @@ set -eo pipefail
 # ---- settings ----
 MTOOLBOX_DIR=/path/to/MToolBox_snakemake
 ANALYSIS_DIR=/path/to/analysis/dir
+CONDA_MODULE=                # conda module to load, e.g. miniconda/2024-02-20;
+                             # empty: use CONDA below
 CONDA=/path/to/conda/bin/conda
+CONDA_ENV=mtoolbox           # name or full path of the MToolBox environment
 REF_MT=rCRS                  # ref_genome_mt in data/reference_genomes.tab
 REF_N=GRCh38                 # ref_genome_n
 MT_FASTA=data/genomes/rCRS.fasta
@@ -27,8 +30,12 @@ EXCLUDE=""                   # samples to leave out, e.g. "P01_cfDNA P02_normal"
 OUT=comparison/mt_comparison
 # ------------------
 
+if [[ -n "$CONDA_MODULE" ]]; then
+    module load "$CONDA_MODULE"
+    CONDA=conda
+fi
 eval "$("$CONDA" shell.bash hook)"
-conda activate mtoolbox
+conda activate "$CONDA_ENV"
 # only now: conda's activation scripts use unset variables
 set -u
 cd "$ANALYSIS_DIR"
