@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(workflow.snakefile).resolve().parent.parent))
 
-from modules.config_parsers import get_genome_vcf_files, parse_config_tabs
+from modules.config_parsers import get_genome_vcf_files, get_ref_pair_files, parse_config_tabs
 
 configfile: "config.yaml"
 
@@ -15,7 +15,8 @@ _analysis_tab, _, _ = parse_config_tabs(analysis_tab_file="data/analysis.tab",
 
 rule all_annotation:
     input:
-        get_genome_vcf_files(_analysis_tab, annotation=True)
+        get_genome_vcf_files(_analysis_tab, annotation=True),
+        get_ref_pair_files(_analysis_tab, "{results}/summary/{ref_genome_mt}_{ref_genome_n}_summary.txt")
 
 include: "variant_calling.snakefile"
 include: "rules/annotation.smk"

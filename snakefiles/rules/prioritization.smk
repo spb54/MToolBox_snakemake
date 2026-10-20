@@ -1,41 +1,12 @@
-# Variant prioritization and per-sample summary (human only).
-# Needs human_analysis_tab from rules/haplogroup.smk and the annotated VCF
-# from rules/annotation.smk.
-from modules.prioritization import (
-    prioritize_variants, summarize_samples, write_mt_read_fraction
-)
+# Variant prioritization and per-sample summary with haplogroups (human only).
+# Needs human_analysis_tab from rules/haplogroup.smk, the annotated VCF
+# from rules/annotation.smk and the mtDNA read counts from rules/summary.smk.
+from modules.prioritization import prioritize_variants, summarize_samples
 
 def human_samples(ref_genome_mt, ref_genome_n):
     tab = human_analysis_tab
     return list(tab.loc[(tab["ref_genome_mt"] == ref_genome_mt) &
                         (tab["ref_genome_n"] == ref_genome_n), "sample"])
-
-def sample_libraries(sample):
-    return sorted(datasets_tab.loc[datasets_tab["sample"] == sample, "library"].unique())
-
-rule mt_read_fraction:
-    input:
-        # trimmed reads: only so that this runs after trimming, the read
-        # counts come from the Trimmomatic logs
-        trimmed = lambda wildcards: expand("data/reads_filtered/{sample}_{library}_qc_R1.fastq.gz",
-                                           sample=wildcards.sample,
-                                           library=sample_libraries(wildcards.sample)),
-        # mtDNA alignments before duplicate removal, as the total includes duplicates
-        mt_bams = lambda wildcards: expand("results/{sample}/map/OUT_{sample}_{library}_{ref_genome_mt}_{ref_genome_n}/"
-                                           "{sample}_{library}_{ref_genome_mt}_{ref_genome_n}_OUT-sorted.bam",
-                                           sample=wildcards.sample,
-                                           library=sample_libraries(wildcards.sample),
-                                           ref_genome_mt=wildcards.ref_genome_mt,
-                                           ref_genome_n=wildcards.ref_genome_n)
-    output:
-        mt_reads = "results/{sample}/{sample}_{ref_genome_mt}_{ref_genome_n}_mtDNA_reads.tsv"
-    params:
-        logs = lambda wildcards: expand(log_dir + "/trimmomatic/{sample}_{library}_trimmomatic.log",
-                                        sample=wildcards.sample,
-                                        library=sample_libraries(wildcards.sample))
-    message: "Counting mtDNA reads of {wildcards.sample}"
-    run:
-        write_mt_read_fraction(wildcards.sample, params.logs, input.mt_bams, output.mt_reads)
 
 def prioritization_inputs(wildcards):
     samples = human_samples(wildcards.ref_genome_mt, wildcards.ref_genome_n)

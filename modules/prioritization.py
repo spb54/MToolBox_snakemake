@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-""" Variant prioritization and per-sample summary for human mtDNA.
+""" Variant prioritization (human mtDNA) and per-sample summary (any species).
 
 Port of MToolBox v1 prioritization.py/summary.py. A variant is
 prioritized when it is private to the sample, i.e. it differs from all
@@ -294,6 +294,8 @@ SUMMARY_HEADER = ["Sample", "Reads after trimming", "mtDNA reads", "mtDNA reads 
                   "N. of heteroplasmic variants",
                   "N. of low-level variants",
                   "N. of prioritized variants"]
+# human only: need haplogroup prediction
+HAPLOGROUP_COLUMNS = {"Best predicted haplogroup(s)", "N. of prioritized variants"}
 
 
 def summarize_samples(sample_inputs, prioritized_counts, out_file,
@@ -302,10 +304,13 @@ def summarize_samples(sample_inputs, prioritized_counts, out_file,
     """ Write one summary row per sample.
 
     Args:
-        sample_inputs: list of dicts with keys sample, best_results,
-            vcf (single-sample VCF), coverage (samtools depth -a) and
-            mt_reads (written by write_mt_read_fraction)
-        prioritized_counts: dict sample -> n. of prioritized variants
+        sample_inputs: list of dicts with keys sample, vcf (single-sample
+            VCF), coverage (samtools depth -a), mt_reads (written by
+            write_mt_read_fraction) and, with prioritized_counts,
+            best_results
+        prioritized_counts: dict sample -> n. of prioritized variants, or
+            None to leave out the haplogroup and prioritization columns
+            (e.g. for non-human species)
         out_file: output tsv path
         homoplasmy_threshold: min HF of homoplasmic variants
         heteroplasmy_min: min HF of heteroplasmic variants (below:
@@ -316,13 +321,17 @@ def summarize_samples(sample_inputs, prioritized_counts, out_file,
         out.write("# homoplasmic: HF >= {0}; heteroplasmic: {1} <= HF < {0}; "
                   "low-level: HF < {1}\n".format(homoplasmy_threshold,
                                                  heteroplasmy_min))
-        out.write("\t".join(SUMMARY_HEADER) + "\n")
+        with_haplogroups = prioritized_counts is not None
+        header = [h for h in SUMMARY_HEADER if with_haplogroups or h not in HAPLOGROUP_COLUMNS]
+        out.write("\t".join(header) + "\n")
         for s in sample_inputs:
             breadth, mean_depth = read_coverage(s["coverage"], min_depth)
             n, homo, het, low = count_variants(s["vcf"], homoplasmy_threshold,
                                                heteroplasmy_min)
-            row = [s["sample"], *read_mt_read_fraction(s["mt_reads"]), breadth, mean_depth,
-                   read_best_haplogroups(s["best_results"]),
-                   n, homo, het, low,
-                   prioritized_counts.get(s["sample"], 0)]
+            row = [s["sample"], *read_mt_read_fraction(s["mt_reads"]), breadth, mean_depth]
+            if with_haplogroups:
+                row.append(read_best_haplogroups(s["best_results"]))
+            row += [n, homo, het, low]
+            if with_haplogroups:
+                row.append(prioritized_counts.get(s["sample"], 0))
             out.write("\t".join(str(x) for x in row) + "\n")

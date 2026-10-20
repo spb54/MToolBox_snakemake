@@ -369,7 +369,7 @@ def get_mt_genomes(df: pd.DataFrame) -> List[str]:
 
 
 def get_mt_fasta(df, ref_genome_mt, field):
-    return df.loc[df['ref_genome_mt'] == ref_genome_mt, field][0]
+    return df.loc[df['ref_genome_mt'] == ref_genome_mt, field].iloc[0]
 
 
 def fastqc_outputs(datasets_tab: pd.DataFrame,

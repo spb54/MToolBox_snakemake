@@ -26,7 +26,8 @@ rule all_prioritization:
         get_ref_pair_files(_human_analysis_tab,
                            "{results}/prioritization/{ref_genome_mt}_{ref_genome_n}_prioritized_variants.txt"),
         get_ref_pair_files(_human_analysis_tab,
-                           "{results}/prioritization/{ref_genome_mt}_{ref_genome_n}_summary.txt")
+                           "{results}/prioritization/{ref_genome_mt}_{ref_genome_n}_summary.txt"),
+        get_ref_pair_files(_analysis_tab, "{results}/summary/{ref_genome_mt}_{ref_genome_n}_summary.txt")
 
 include: "variant_calling.snakefile"
 include: "rules/haplogroup.smk"

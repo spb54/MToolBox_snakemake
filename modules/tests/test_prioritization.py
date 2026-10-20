@@ -91,6 +91,14 @@ def test_count_variants_and_summary(tmp_path):
     row = out.read_text().splitlines()[-1].split("\t")
     assert row == ["s1", "2000", "50", "2.5", "50.0", "8.0", "H1;H1a", "6", "2", "3", "1", "3"]
 
+    # any species: no haplogroup and prioritization columns
+    summarize_samples([{"sample": "s1", "vcf": vcf, "coverage": cov, "mt_reads": mt_reads}],
+                      None, str(out), homoplasmy_threshold=0.97,
+                      heteroplasmy_min=0.03, min_depth=5)
+    header, row = [l.split("\t") for l in out.read_text().splitlines()[1:]]
+    assert "Best predicted haplogroup(s)" not in header and len(header) == len(row)
+    assert row == ["s1", "2000", "50", "2.5", "50.0", "8.0", "6", "2", "3", "1"]
+
 
 TRIMMOMATIC_LOG = ("TrimmomaticPE: Started with arguments:\n ...\n"
                    "Input Read Pairs: 1000 Both Surviving: 900 (90.00%) Forward Only Surviving: 40 (4.00%) "

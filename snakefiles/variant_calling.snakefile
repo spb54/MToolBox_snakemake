@@ -22,7 +22,7 @@ from modules.BEDoutput import bed_output, fasta_output
 from modules.config_parsers import (
     fastqc_outputs, get_bed_files, get_datasets_for_symlinks,
     get_fasta_files, get_genome_files, get_genome_single_vcf_files,
-    get_genome_single_vcf_index_files, get_genome_vcf_files, get_mt_genomes, get_mt_fasta,
+    get_genome_single_vcf_index_files, get_genome_vcf_files, get_mt_genomes, get_mt_fasta, get_ref_pair_files,
     get_sample_bamfiles, get_symlinks, parse_config_tabs, get_inputs_for_rule_map_nuclear_MT_SE
 )
 from modules.filter_alignments import filter_alignments, cat_alignments
@@ -78,7 +78,8 @@ rule all:
         fastqc_outputs(datasets_tab, analysis_tab=analysis_tab, out="filtered"),
         get_genome_vcf_files(analysis_tab),
         get_bed_files(analysis_tab),
-        get_fasta_files(analysis_tab)
+        get_fasta_files(analysis_tab),
+        get_ref_pair_files(analysis_tab, "{results}/summary/{ref_genome_mt}_{ref_genome_n}_summary.txt")
 
 rule symlink_libraries:
     input:
@@ -774,3 +775,5 @@ rule merge_VCF:
             shell("gunzip {output.merged_vcf}.gz")
         else:
             shell("bcftools merge {input.single_vcf_list} -O v -o {output.merged_vcf}")
+
+include: "rules/summary.smk"

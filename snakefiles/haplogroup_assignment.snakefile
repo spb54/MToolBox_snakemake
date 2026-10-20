@@ -22,7 +22,8 @@ if _human_analysis_tab.empty:
 rule all_haplo_prediction:
     input:
         get_ref_pair_files(_human_analysis_tab,
-                           "{results}/haplogroups/{ref_genome_mt}_{ref_genome_n}_best_results.csv")
+                           "{results}/haplogroups/{ref_genome_mt}_{ref_genome_n}_best_results.csv"),
+        get_ref_pair_files(_analysis_tab, "{results}/summary/{ref_genome_mt}_{ref_genome_n}_summary.txt")
 
 include: "variant_calling.snakefile"
 include: "rules/haplogroup.smk"
